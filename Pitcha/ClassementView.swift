@@ -8,6 +8,7 @@ struct ClassementView: View {
         ZStack {
             PitchaBackground()
 
+            
             ScrollView {
                 VStack(spacing: 22) {
                     // Sélecteur de scope en pill blanche
