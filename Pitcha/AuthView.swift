@@ -1,198 +1,193 @@
 import SwiftUI
 
+// MARK: - Flux d'authentification par numéro de téléphone
+
 struct AuthView: View {
     @EnvironmentObject var session: SessionViewModel
+    @State private var phone = ""
+    @State private var code = ""
+    @State private var step: Step = .phoneEntry
 
-    @State private var isSignUp = false
-    @State private var pseudo = ""
-    @State private var email = ""
-    @State private var password = ""
-
-    private var formIsValid: Bool {
-        let emailOK = email.contains("@") && email.contains(".")
-        let passwordOK = password.count >= 6
-        let pseudoOK = isSignUp ? pseudo.trimmingCharacters(in: .whitespaces).count >= 3 : true
-        return emailOK && passwordOK && pseudoOK
-    }
+    enum Step { case phoneEntry, codeEntry }
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [Color.teal.opacity(0.25), Color(.systemBackground)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-
-            VStack(spacing: 24) {
-                Spacer()
-
+            PitchaBackground()
+            VStack(spacing: 28) {
                 // Logo
-                VStack(spacing: 8) {
+                VStack(spacing: 4) {
                     Image(systemName: "soccerball.inverse")
-                        .font(.system(size: 64))
-                        .foregroundStyle(.teal)
-                    Text("Pitcha")
-                        .font(.system(size: 40, weight: .black, design: .rounded))
-                    Text("Joue. Progresse. Domine.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 64, weight: .heavy))
+                        .foregroundStyle(Pitcha.gradient)
+                    Text("PITCHA")
+                        .font(.system(size: 36, weight: .black, design: .rounded))
+                        .foregroundStyle(Pitcha.navy)
+                    Text("Le foot, gamifié.")
+                        .font(.subheadline).foregroundStyle(.secondary)
                 }
+                .padding(.top, 40)
 
-                // Formulaire
-                VStack(spacing: 14) {
-                    if isSignUp {
-                        PitchaTextField(icon: "person.fill", placeholder: "Pseudo", text: $pseudo)
+                VStack(spacing: 18) {
+                    switch step {
+                    case .phoneEntry: phoneEntryCard
+                    case .codeEntry: codeEntryCard
                     }
-                    PitchaTextField(icon: "envelope.fill", placeholder: "Email", text: $email)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                    PitchaTextField(icon: "lock.fill", placeholder: "Mot de passe (6 min.)", text: $password, isSecure: true)
-                }
-                .padding(.horizontal, 24)
 
-                if let error = session.errorMessage {
-                    Text(error)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                }
-
-                // Bouton principal
-                Button {
-                    Task {
-                        if isSignUp {
-                            await session.signUp(email: email, password: password, pseudo: pseudo)
-                        } else {
-                            await session.signIn(email: email, password: password)
-                        }
+                    if let error = session.errorMessage {
+                        Text(error)
+                            .font(.footnote).foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
                     }
-                } label: {
-                    Group {
-                        if session.isWorking {
-                            ProgressView().tint(.white)
-                        } else {
-                            Text(isSignUp ? "Créer mon compte" : "Se connecter")
-                                .fontWeight(.bold)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(formIsValid ? Color.teal : Color.gray.opacity(0.4))
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                }
-                .disabled(!formIsValid || session.isWorking)
-                .padding(.horizontal, 24)
-
-                // Bascule connexion / inscription
-                Button {
-                    withAnimation(.snappy) {
-                        isSignUp.toggle()
-                        session.errorMessage = nil
-                    }
-                } label: {
-                    Text(isSignUp ? "Déjà un compte ? **Se connecter**" : "Pas de compte ? **S'inscrire**")
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
                 }
 
                 Spacer()
-            }
-        }
-    }
-}
-
-// MARK: - Écran vérification email
-
-struct EmailVerificationView: View {
-    @EnvironmentObject var session: SessionViewModel
-    @State private var emailResent = false
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            Image(systemName: "envelope.badge.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(.teal)
-
-            Text("Vérifie ton email")
-                .font(.title.bold())
-
-            Text("Un lien de vérification t'a été envoyé.\nClique dessus puis reviens ici.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-
-            if let error = session.errorMessage {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-            }
-
-            Button {
-                Task { await session.checkEmailVerified() }
-            } label: {
-                Group {
-                    if session.isWorking {
-                        ProgressView().tint(.white)
-                    } else {
-                        Text("J'ai vérifié mon email").fontWeight(.bold)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(Color.teal)
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
             }
             .padding(.horizontal, 24)
+        }
+    }
 
-            Button {
-                Task {
-                    await session.resendVerificationEmail()
-                    emailResent = true
-                }
-            } label: {
-                Text(emailResent ? "Email renvoyé ✓" : "Renvoyer l'email")
+    // MARK: Étape 1 : numéro de téléphone
+
+    private var phoneEntryCard: some View {
+        VStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Ton numéro de téléphone")
+                    .font(.headline.weight(.heavy)).foregroundStyle(Pitcha.navy)
+                Text("Un SMS de vérification te sera envoyé.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 10) {
+                Text("🇫🇷 +33")
+                    .font(.subheadline.bold())
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.gray.opacity(0.12)))
+                TextField("6 12 34 56 78", text: $phone)
+                    .keyboardType(.phonePad)
                     .font(.subheadline)
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.gray.opacity(0.08)))
             }
 
-            Button("Se déconnecter", role: .destructive) {
-                session.signOut()
+            PitchaButton(
+                label: session.isWorking ? "Envoi…" : "Recevoir le code",
+                disabled: phone.count < 9 || session.isWorking
+            ) {
+                let fullNumber = "+33\(phone.filter(\.isNumber))"
+                Task { await session.sendPhoneCode(phoneNumber: fullNumber) }
+                step = .codeEntry
             }
-            .font(.footnote)
+        }
+        .pitchaCard()
+    }
 
-            Spacer()
+    // MARK: Étape 2 : code SMS
+
+    private var codeEntryCard: some View {
+        VStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Code de vérification")
+                    .font(.headline.weight(.heavy)).foregroundStyle(Pitcha.navy)
+                Text("Saisis le code reçu par SMS.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            TextField("123456", text: $code)
+                .keyboardType(.numberPad)
+                .font(.system(size: 28, weight: .heavy, design: .rounded))
+                .multilineTextAlignment(.center)
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 14).fill(Color.gray.opacity(0.08)))
+
+            PitchaButton(
+                label: session.isWorking ? "Vérification…" : "Confirmer",
+                disabled: code.count < 6 || session.isWorking
+            ) {
+                Task { await session.verifyPhoneCode(code: code) }
+            }
+
+            Button("Changer de numéro") { step = .phoneEntry; phone = ""; code = "" }
+                .font(.footnote).foregroundStyle(Pitcha.tealDark)
+        }
+        .pitchaCard()
+    }
+}
+
+// MARK: - Onboarding pseudo (nouvel utilisateur après phone auth)
+
+struct OnboardingView: View {
+    let uid: String
+    @EnvironmentObject var session: SessionViewModel
+    @State private var pseudo = ""
+    @State private var agreed = false
+
+    var body: some View {
+        ZStack {
+            PitchaBackground()
+            VStack(spacing: 28) {
+                VStack(spacing: 6) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 56)).foregroundStyle(Pitcha.gradient)
+                    Text("Crée ton profil")
+                        .font(.title2.weight(.heavy)).foregroundStyle(Pitcha.navy)
+                    Text("Choisis ton pseudo Pitcha.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                .padding(.top, 50)
+
+                VStack(spacing: 18) {
+                    PitchaTextField(icon: "tag.fill", placeholder: "Pseudo (ex : Adil_10)", text: $pseudo)
+
+                    Toggle(isOn: $agreed) {
+                        Text("J'accepte les conditions d'utilisation")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .tint(Pitcha.teal)
+
+                    if let error = session.errorMessage {
+                        Text(error).font(.footnote).foregroundStyle(.red)
+                    }
+
+                    PitchaButton(
+                        label: session.isWorking ? "Création…" : "Commencer",
+                        disabled: pseudo.count < 3 || !agreed || session.isWorking
+                    ) {
+                        Task { await session.registerPseudo(uid: uid, pseudo: pseudo) }
+                    }
+                }
+                .pitchaCard()
+
+                Spacer()
+            }
+            .padding(.horizontal, 24)
         }
     }
 }
 
-// MARK: - Composant champ texte
+// MARK: - Helpers UI partagés
 
-struct PitchaTextField: View {
-    let icon: String
-    let placeholder: String
-    @Binding var text: String
-    var isSecure = false
+private extension View {
+    func pitchaCard() -> some View {
+        self.padding(22)
+            .background(RoundedRectangle(cornerRadius: 26).fill(.white)
+                .shadow(color: .black.opacity(0.07), radius: 12, y: 6))
+    }
+}
 
+struct PitchaButton: View {
+    let label: String
+    var disabled = false
+    let action: () -> Void
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .foregroundStyle(.teal)
-                .frame(width: 24)
-            if isSecure {
-                SecureField(placeholder, text: $text)
-            } else {
-                TextField(placeholder, text: $text)
-                    .autocorrectionDisabled()
-            }
+        Button(action: action) {
+            Text(label).fontWeight(.bold).frame(maxWidth: .infinity).frame(height: 52)
+                .background(RoundedRectangle(cornerRadius: 16)
+                    .fill(disabled ? AnyShapeStyle(Color.gray.opacity(0.25)) : AnyShapeStyle(Pitcha.gradient)))
+                .foregroundStyle(disabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.white))
         }
-        .padding(14)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .disabled(disabled)
     }
 }

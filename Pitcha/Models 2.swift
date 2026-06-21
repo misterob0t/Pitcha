@@ -239,6 +239,10 @@ struct AppUser: Identifiable, Codable {
     var bestGoalsInMatch: Int? = nil
     var friendRequests: [String]? = nil   // uids des demandes d'ami reçues
     var title: String? = nil              // titre style League of Legends
+    var pinnedFriends: [String]? = nil    // uids épinglés (meilleurs amis)
+    var mutedFriends: [String]? = nil     // uids mis en sourdine (DMs)
+    var fcmToken: String? = nil      // token FCM pour les notifications push
+    var matchesOrganized: Int? = nil      // matchs organisés (incrémenté à la création)
 
     // MARK: Calculés
 
@@ -392,6 +396,8 @@ enum MatchType: String, Codable, CaseIterable, Identifiable {
 
 enum MatchStatus: String, Codable {
     case open, played, cancelled
+    case pendingValidation  // score soumis, en attente du vote des participants
+    case contested          // 30%+ de contestation
 }
 
 struct Match: Identifiable, Codable {
@@ -413,6 +419,8 @@ struct Match: Identifiable, Codable {
     var scoreB: Int? = nil             // score final équipe B (2e moitié)
     var scorers: [String: Int]? = nil  // uid -> buts marqués
     var slotAssignments: [String: Int]? = nil  // uid -> slot choisi sur la feuille
+    var scoreSubmittedAt: Date? = nil            // timestamp de la soumission du score
+    var validationVotes: [String: String]? = nil // uid -> "validate"|"contest" (cache rapide)
 
     var isFull: Bool { participants.count >= maxPlayers }
     var isPrivateMatch: Bool { isPrivate ?? false }
@@ -515,5 +523,4 @@ struct ChatMessage: Identifiable, Codable {
     var senderPseudo: String
     var text: String
     var sentAt: Date
-    
 }

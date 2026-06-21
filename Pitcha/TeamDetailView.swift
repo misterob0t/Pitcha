@@ -4,6 +4,7 @@ struct TeamDetailView: View {
     let team: Team
     @EnvironmentObject var session: SessionViewModel
     @EnvironmentObject var tabBarVisibility: TabBarVisibility
+    @EnvironmentObject var network: NetworkMonitor
     @StateObject private var viewModel = TeamDetailViewModel()
     @Environment(\.dismiss) private var dismiss
 
@@ -46,6 +47,7 @@ struct TeamDetailView: View {
     private var inputBar: some View {
         HStack(spacing: 10) {
             TextField("Message...", text: $messageText)
+                .disabled(!network.isConnected)
                 .submitLabel(.send)
                 .onSubmit { sendCurrentMessage() }
                 .padding(.horizontal, 14)
@@ -56,9 +58,9 @@ struct TeamDetailView: View {
             Button { sendCurrentMessage() } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 32))
-                    .foregroundStyle(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : Pitcha.teal)
+                    .foregroundStyle((messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !network.isConnected) ? .gray : Pitcha.teal)
             }
-            .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !network.isConnected)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -81,6 +83,7 @@ struct TeamDetailView: View {
             Divider()
 
             // Chat
+            if !network.isConnected { OfflineChatBanner() }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 10) {

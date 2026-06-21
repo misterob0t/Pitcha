@@ -24,7 +24,7 @@ struct CreateMatchView: View {
         case 0: return 420   // type (2 cartes)
         case 1: return 420   // visibilité
         case 2: return 660   // calendrier
-        case 3: return 480   // compteur joueurs
+        case 3: return 560   // compteur joueurs
         default: return 460  // lieu
         }
     }
@@ -342,7 +342,6 @@ struct PlayersStep: View {
 
     var body: some View {
         VStack(spacing: 26) {
-            Spacer()
 
             Text("\(maxPlayers)")
                 .font(.system(size: 90, weight: .black, design: .rounded))
@@ -367,8 +366,6 @@ struct PlayersStep: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Spacer()
-            Spacer()
         }
         .padding(22)
     }
