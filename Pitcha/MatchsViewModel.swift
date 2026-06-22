@@ -90,6 +90,7 @@ final class MatchsViewModel: ObservableObject {
         maxPlayers: Int,
         zone: String,
         address: String,
+        tag: MatchTag = .mixte,
         organizer: AppUser
     ) async -> Bool {
         guard let uid = organizer.id else { return false }
@@ -104,6 +105,7 @@ final class MatchsViewModel: ObservableObject {
             status: .open,
             teamId: nil,
             isPrivate: isPrivate,
+            tag: tag.rawValue,
             zone: zone.trimmingCharacters(in: .whitespaces),
             createdAt: Date()
         )

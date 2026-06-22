@@ -242,7 +242,11 @@ struct AppUser: Identifiable, Codable {
     var pinnedFriends: [String]? = nil    // uids épinglés (meilleurs amis)
     var mutedFriends: [String]? = nil     // uids mis en sourdine (DMs)
     var fcmToken: String? = nil      // token FCM pour les notifications push
-    var matchesOrganized: Int? = nil      // matchs organisés (incrémenté à la création)
+    var gender: String? = nil        // sexe choisi à l'inscription, non modifiable ensuite
+    var pseudoLower: String? = nil   // pseudo en minuscules, pour la recherche insensible à la casse
+    var matchesOrganized: Int? = nil
+    var dismissedMatches: [String]? = nil  // ids des matchs clôturés masqués par l'utilisateur
+    var blockedUsers: [String]? = nil      // uids bloqués par l'utilisateur      // matchs organisés (incrémenté à la création)
 
     // MARK: Calculés
 
@@ -276,6 +280,8 @@ struct AppUser: Identifiable, Codable {
 
     var bestInOneMatch: Int { bestGoalsInMatch ?? 0 }
     var incomingRequests: [String] { friendRequests ?? [] }
+    var blockedUids: [String] { blockedUsers ?? [] }
+    func hasBlocked(_ uid: String?) -> Bool { uid != nil && blockedUids.contains(uid!) }
 
     var isOnline: Bool {
         guard let lastSeen else { return false }
@@ -321,6 +327,13 @@ struct AppUser: Identifiable, Codable {
             lastSeen: Date()
         )
     }
+}
+
+enum Gender: String, Codable, CaseIterable, Identifiable {
+    case homme = "Homme"
+    case femme = "Femme"
+    case autre = "Autre"
+    var id: String { rawValue }
 }
 
 enum PlayerPosition: String, Codable, CaseIterable, Identifiable {
@@ -394,6 +407,11 @@ enum MatchType: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum MatchTag: String, Codable {
+    case mixte
+    case filles
+}
+
 enum MatchStatus: String, Codable {
     case open, played, cancelled
     case pendingValidation  // score soumis, en attente du vote des participants
@@ -412,6 +430,7 @@ struct Match: Identifiable, Codable {
     var status: MatchStatus
     var teamId: String?
     var isPrivate: Bool?   // optionnel pour compat anciens matchs
+    var tag: String? = nil // "mixte" ou "filles" ; absent = mixte (compat anciens matchs)
     var zone: String?      // zone géographique (ex : "Paris 15e")
     var createdAt: Date?   // pour le quota journalier
     var unavailable: [String]? = nil   // joueurs déclarés indisponibles (matchs d'équipe)
@@ -424,6 +443,7 @@ struct Match: Identifiable, Codable {
 
     var isFull: Bool { participants.count >= maxPlayers }
     var isPrivateMatch: Bool { isPrivate ?? false }
+    var isGirlsOnly: Bool { tag == MatchTag.filles.rawValue }
     var unavailableIds: [String] { unavailable ?? [] }
 
     /// Répartition terrain : slots choisis prioritaires, le reste comble
