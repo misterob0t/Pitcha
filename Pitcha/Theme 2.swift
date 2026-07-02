@@ -149,6 +149,10 @@ struct InitialsAvatar: View {
 struct PillButton: View {
     let label: String
     let isSelected: Bool
+    /// Couleur de fond quand sélectionné. Par défaut le dégradé habituel
+    /// (vert/teal) ; peut être surchargé au cas par cas (ex: or pour Tournois)
+    /// sans affecter les autres usages de PillButton dans l'app.
+    var selectedFill: AnyShapeStyle = AnyShapeStyle(Pitcha.gradient)
     let action: () -> Void
 
     var body: some View {
@@ -163,11 +167,42 @@ struct PillButton: View {
                 .background(
                     Capsule().fill(
                         isSelected
-                            ? AnyShapeStyle(Pitcha.gradient)
+                            ? selectedFill
                             : AnyShapeStyle(Color.black.opacity(0.06))
                     )
                 )
                 .foregroundStyle(isSelected ? .white : .secondary)
         }
+    }
+}
+
+// MARK: - Champ de texte stylé réutilisable
+
+struct PitchaTextField: View {
+    let icon: String
+    let placeholder: String
+    @Binding var text: String
+    var keyboardType: UIKeyboardType = .default
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundStyle(Pitcha.tealDark)
+                .frame(width: 20)
+            TextField(placeholder, text: $text)
+                .keyboardType(keyboardType)
+                .font(.subheadline)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.gray.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(text.isEmpty ? Color.clear : Pitcha.teal.opacity(0.4), lineWidth: 1.5)
+                )
+        )
     }
 }

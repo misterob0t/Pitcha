@@ -108,28 +108,56 @@ final class FirebaseService {
     /// - les matchs "played"/"contested" restent visibles 24h après la
     ///   soumission du score, pour que les joueurs voient le résultat final
     ///   et le taux de validation avant qu'ils ne disparaissent
+    /// ⚠️ Listener temps réel sur une requête LARGE (toute la liste de
+    /// matchs). À chaque écriture sur N'IMPORTE QUEL document correspondant
+    /// (n'importe qui, n'importe où, qui crée/rejoint un match), Firestore
+    /// re-livre jusqu'à 200 documents à TOUS les clients qui écoutent cette
+    /// requête simultanément. Le coût grossit en (DAU_à_l'écran × fréquence
+    /// d'écriture globale), pas juste en DAU — c'est le seul vrai risque de
+    /// croissance non-linéaire qui restait dans l'app. Conservé pour
+    /// compat, mais NE PLUS L'UTILISER pour la liste principale (voir
+    /// fetchOpenMatches ci-dessous, utilisé à la place dans MatchsView).
+    @available(*, deprecated, message: "Utiliser fetchOpenMatches() + rafraîchissement périodique pour la liste principale — ce listener fan-out coûte cher à l'échelle")
     func listenOpenMatches(onChange: @escaping ([Match]) -> Void) -> ListenerRegistration {
         let since = Date().addingTimeInterval(-24 * 3600)
         return matchesRef
             .whereField("date", isGreaterThan: since)
             .order(by: "date")
+            .limit(to: 200)
             .addSnapshotListener { snapshot, _ in
-                let now = Date()
-                let matches = (snapshot?.documents.compactMap { try? $0.data(as: Match.self) } ?? [])
-                    .filter { match in
-                        switch match.status {
-                        case .open:
-                            return true
-                        case .pendingValidation:
-                            return true
-                        case .played, .contested:
-                            let finishedAt = match.scoreSubmittedAt ?? match.date
-                            return now.timeIntervalSince(finishedAt) < 24 * 3600
-                        case .cancelled:
-                            return false
-                        }
-                    }
-                onChange(matches)
+                onChange(Self.filterVisibleMatches(snapshot))
+            }
+    }
+
+    /// Lecture ponctuelle (pas de listener) : coût FIXE par appel, jamais
+    /// multiplié par l'activité des autres utilisateurs. Pensé pour être
+    /// rappelé périodiquement (toutes les 20-30s) UNIQUEMENT pendant que
+    /// l'écran Matchs est réellement visible — c'est ce qu'utilise
+    /// MatchsViewModel. La fraîcheur perçue reste excellente (quelques
+    /// secondes de délai max) pour un coût borné et prévisible.
+    func fetchOpenMatches() async throws -> [Match] {
+        let since = Date().addingTimeInterval(-24 * 3600)
+        let snapshot = try await matchesRef
+            .whereField("date", isGreaterThan: since)
+            .order(by: "date")
+            .limit(to: 200)
+            .getDocuments()
+        return Self.filterVisibleMatches(snapshot)
+    }
+
+    private static func filterVisibleMatches(_ snapshot: QuerySnapshot?) -> [Match] {
+        let now = Date()
+        return (snapshot?.documents.compactMap { try? $0.data(as: Match.self) } ?? [])
+            .filter { match in
+                switch match.status {
+                case .open, .pendingValidation:
+                    return true
+                case .played, .contested:
+                    let finishedAt = match.scoreSubmittedAt ?? match.date
+                    return now.timeIntervalSince(finishedAt) < 24 * 3600
+                case .cancelled:
+                    return false
+                }
             }
     }
 
@@ -137,8 +165,8 @@ final class FirebaseService {
         _ = try matchesRef.addDocument(from: match)
     }
 
-    /// Rejoindre un match : déduit 1 coin (non remboursable), ajoute le joueur.
-    /// Transaction atomique pour éviter les états incohérents.
+    /// Rejoindre un match : déduit 1 coin (non remboursable) pour les freemium,
+    /// GRATUIT pour les abonnés Premium. Transaction atomique.
     func joinMatch(matchId: String, uid: String) async throws {
         let matchDoc = matchesRef.document(matchId)
         let userDoc = usersRef.document(uid)
@@ -154,10 +182,14 @@ final class FirebaseService {
                 }
                 guard !match.isFull else { throw PitchaError.matchFull }
                 guard !match.participants.contains(uid) else { throw PitchaError.alreadyJoined }
-                guard user.coins >= 1 else { throw PitchaError.notEnoughCoins }
 
                 transaction.updateData(["participants": FieldValue.arrayUnion([uid])], forDocument: matchDoc)
-                transaction.updateData(["coins": FieldValue.increment(Int64(-1))], forDocument: userDoc)
+
+                // Les membres Premium ne paient pas de coin pour rejoindre un match
+                if !user.hasPremium {
+                    guard user.coins >= 1 else { throw PitchaError.notEnoughCoins }
+                    transaction.updateData(["coins": FieldValue.increment(Int64(-1))], forDocument: userDoc)
+                }
                 return nil
             } catch {
                 errorPointer?.pointee = error as NSError

@@ -18,10 +18,14 @@ final class SessionViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isWorking = false
 
+    /// true juste après une inscription réussie : déclenche le message de
+    /// bienvenue "20 coins offerts" à la toute première arrivée sur
+    /// l'app (une seule fois par compte, jamais aux connexions suivantes).
+    @Published var showWelcomeBonus = false
+
     private let service = FirebaseService.shared
     private var authHandle: AuthStateDidChangeListenerHandle?
     private var userListener: ListenerRegistration?
-    private var presenceTask: Task<Void, Never>?
 
     init() {
         listenAuthState()
@@ -30,7 +34,12 @@ final class SessionViewModel: ObservableObject {
     deinit {
         if let authHandle { Auth.auth().removeStateDidChangeListener(authHandle) }
         userListener?.remove()
-        presenceTask?.cancel()
+        // deinit n'est pas isolé au MainActor : on bascule explicitement
+        // dans une Task @MainActor pour appeler le service de présence
+        // sans bloquer ni violer l'isolation d'acteur.
+        Task { @MainActor in
+            PresenceService.shared.stop()
+        }
     }
 
     // MARK: - Auth state
@@ -75,21 +84,15 @@ final class SessionViewModel: ObservableObject {
 
     // MARK: - Présence (statut en ligne)
 
-    /// Met à jour lastSeen toutes les 60s tant que l'app tourne.
-    /// Un ami est "en ligne" si son lastSeen date de moins de 2 minutes.
+    /// Présence via Realtime Database : écriture uniquement au connect/
+    /// disconnect réel (géré côté serveur Firebase), zéro polling Firestore.
+    /// Voir PresenceService.swift pour le détail de l'architecture.
     private func startPresence(uid: String) {
-        presenceTask?.cancel()
-        presenceTask = Task { [service] in
-            while !Task.isCancelled {
-                await service.updatePresence(uid: uid)
-                try? await Task.sleep(for: .seconds(60))
-            }
-        }
+        PresenceService.shared.start(uid: uid)
     }
 
     private func stopPresence() {
-        presenceTask?.cancel()
-        presenceTask = nil
+        PresenceService.shared.stop()
     }
 
     // MARK: - Actions
@@ -99,6 +102,10 @@ final class SessionViewModel: ObservableObject {
     func signUp(email: String, password: String, pseudo: String, gender: Gender) async {
         await run {
             try await self.service.signUp(email: email, password: password, pseudo: pseudo, gender: gender)
+        }
+        // Uniquement si l'inscription a réussi (pas d'erreur en attente)
+        if errorMessage == nil {
+            showWelcomeBonus = true
         }
     }
 
