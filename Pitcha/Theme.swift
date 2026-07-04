@@ -153,7 +153,12 @@ struct PillButton: View {
     /// (vert/teal) ; peut être surchargé au cas par cas (ex: or pour Tournois)
     /// sans affecter les autres usages de PillButton dans l'app.
     var selectedFill: AnyShapeStyle = AnyShapeStyle(Pitcha.gradient)
+    /// Active un reflet lumineux qui balaie le bouton en boucle quand
+    /// sélectionné — effet "premium", pensé pour l'or (Tournois).
+    var shimmer: Bool = false
     let action: () -> Void
+
+    @State private var shimmerPhase: CGFloat = -1
 
     var body: some View {
         Button {
@@ -171,7 +176,31 @@ struct PillButton: View {
                             : AnyShapeStyle(Color.black.opacity(0.06))
                     )
                 )
+                .overlay(
+                    Group {
+                        if isSelected && shimmer {
+                            GeometryReader { geo in
+                                LinearGradient(
+                                    colors: [.clear, .white.opacity(0.65), .clear],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                .frame(width: geo.size.width * 0.4)
+                                .rotationEffect(.degrees(20))
+                                .offset(x: shimmerPhase * geo.size.width * 1.6)
+                            }
+                            .clipShape(Capsule())
+                            .allowsHitTesting(false)
+                        }
+                    }
+                )
                 .foregroundStyle(isSelected ? .white : .secondary)
+        }
+        .onAppear {
+            guard shimmer else { return }
+            withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                shimmerPhase = 1.4
+            }
         }
     }
 }
