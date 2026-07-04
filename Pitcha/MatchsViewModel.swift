@@ -19,7 +19,7 @@ final class MatchsViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isWorking = false
 
-    static let cities = ["Paris", "Meaux", "Lyon", "Marseille", "Lille", "Bordeaux"]
+    static let cities = ["Paris", "Lyon", "Nantes", "Marseille", "Lille", "Bordeaux"]
 
     private let service = FirebaseService.shared
     private var refreshTask: Task<Void, Never>?

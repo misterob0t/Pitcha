@@ -1,16 +1,15 @@
 import Foundation
 import StoreKit
+import Combine
 
 // MARK: - Product IDs
 
 enum PitchaProductID {
-    // Consommables — coins
     static let coinsSmall  = "com.adil.pitcha.coins.small"
     static let coinsMedium = "com.adil.pitcha.coins.medium"
     static let coinsLarge  = "com.adil.pitcha.coins.large"
     static let coinsXLarge = "com.adil.pitcha.coins.xlarge"
 
-    // Abonnements Premium
     static let premiumMonthly = "com.adil.pitcha.premium.monthly"
     static let premiumYearly  = "com.adil.pitcha.premium.yearly"
 
@@ -19,7 +18,6 @@ enum PitchaProductID {
         premiumMonthly, premiumYearly
     ]
 
-    /// Nombre de coins accordé pour chaque pack consommable.
     static func coinsAmount(for productID: String) -> Int {
         switch productID {
         case coinsSmall:  return 50
@@ -31,40 +29,36 @@ enum PitchaProductID {
     }
 }
 
+// MARK: - Vérification cryptographique (fonction libre, explicitement hors
+// isolation d'acteur — nécessaire car le projet a l'isolation par défaut
+// MainActor activée en Swift 6, sinon cette fonction serait implicitement
+// MainActor-isolée et inutilisable depuis Task.detached).
+
+nonisolated func pitchaCheckVerified<T>(_ result: VerificationResult<T>) throws -> T {
+    switch result {
+    case .unverified:
+        throw StoreError.failedVerification
+    case .verified(let value):
+        return value
+    }
+}
+
 // MARK: - StoreKitManager
 
-/// Singleton qui charge les produits, gère les achats et écoute
-/// les transactions en arrière-plan (renouvellements, restaurations).
-/// Utilise StoreKit 2 (async/await, disponible iOS 15+).
 @MainActor
 final class StoreKitManager: ObservableObject {
 
     static let shared = StoreKitManager()
 
-    // MARK: - État publié
-
-    /// Produits chargés depuis l'App Store / fichier .storekit local.
     @Published var products: [Product] = []
-
-    /// true si un abonnement Premium est actuellement actif et valide.
     @Published var isPremiumActive: Bool = false
-
-    /// Date d'expiration du Premium actif (nil si aucun abonnement).
     @Published var premiumExpiresAt: Date? = nil
-
-    /// true pendant un appel réseau StoreKit en cours.
     @Published var isLoading: Bool = false
-
-    /// Dernière erreur StoreKit (affichée dans l'UI).
     @Published var errorMessage: String? = nil
-
-    // MARK: - Privé
 
     private var transactionListenerTask: Task<Void, Error>? = nil
 
     private init() {
-        // Démarrer l'écoute des transactions dès l'init (renouvellements,
-        // achats effectués depuis un autre appareil, etc.)
         transactionListenerTask = listenForTransactions()
     }
 
@@ -74,13 +68,11 @@ final class StoreKitManager: ObservableObject {
 
     // MARK: - Chargement des produits
 
-    /// À appeler au lancement de BoutiqueView.
     func loadProducts() async {
         isLoading = true
         errorMessage = nil
         do {
             let fetched = try await Product.products(for: PitchaProductID.allIDs)
-            // Tri : consommables d'abord, puis abonnements ; par prix croissant
             products = fetched.sorted {
                 if $0.type == $1.type { return $0.price < $1.price }
                 return $0.type == .consumable
@@ -93,21 +85,17 @@ final class StoreKitManager: ObservableObject {
 
     // MARK: - Achat
 
-    /// Lance le paiement Apple et retourne le résultat à traiter.
-    /// L'appelant (BoutiqueViewModel) est responsable de créditer Firestore.
     func purchase(_ product: Product) async throws -> Transaction? {
         let result = try await product.purchase()
         switch result {
         case .success(let verification):
-            let transaction = try checkVerified(verification)
-            // Mettre à jour le statut Premium si c'est un abonnement
+            let transaction = try pitchaCheckVerified(verification)
             await updatePremiumStatus()
             await transaction.finish()
             return transaction
         case .userCancelled:
             return nil
         case .pending:
-            // Achat en attente (contrôle parental, etc.)
             throw StoreError.pending
         @unknown default:
             return nil
@@ -116,7 +104,6 @@ final class StoreKitManager: ObservableObject {
 
     // MARK: - Restauration
 
-    /// Restaure les achats (abonnements actifs) — obligatoire pour la review Apple.
     func restorePurchases() async {
         isLoading = true
         do {
@@ -128,21 +115,18 @@ final class StoreKitManager: ObservableObject {
         isLoading = false
     }
 
-    // MARK: - Vérification du statut Premium
+    // MARK: - Statut Premium
 
-    /// Vérifie toutes les transactions courantes pour déterminer si
-    /// un abonnement Premium est actif. Appelé au lancement et après chaque achat.
     func updatePremiumStatus() async {
         var active = false
         var expiresAt: Date? = nil
 
         for await result in Transaction.currentEntitlements {
-            guard let transaction = try? checkVerified(result) else { continue }
+            guard let transaction = try? pitchaCheckVerified(result) else { continue }
             if transaction.productID == PitchaProductID.premiumMonthly ||
                transaction.productID == PitchaProductID.premiumYearly {
                 if transaction.revocationDate == nil {
                     active = true
-                    // Prendre la date d'expiration la plus lointaine
                     if let exp = transaction.expirationDate {
                         expiresAt = expiresAt.map { max($0, exp) } ?? exp
                     }
@@ -156,37 +140,19 @@ final class StoreKitManager: ObservableObject {
 
     // MARK: - Écoute continue des transactions
 
-    /// Écoute les transactions arrivant de l'extérieur (renouvellement automatique,
-    /// achat depuis un autre appareil, remboursement, etc.).
     private func listenForTransactions() -> Task<Void, Error> {
-        Task.detached(priority: .background) { [weak self] in
+        Task.detached(priority: .background) {
             for await result in Transaction.updates {
-                guard let self else { return }
-                do {
-                    let transaction = try self.checkVerified(result)
-                    await self.updatePremiumStatus()
+                // pitchaCheckVerified est une fonction libre : zéro isolation d'acteur
+                if let transaction = try? pitchaCheckVerified(result) {
+                    await StoreKitManager.shared.updatePremiumStatus()
                     await transaction.finish()
-                } catch {
-                    // Transaction non vérifiable : on ignore silencieusement
                 }
             }
         }
     }
 
-    // MARK: - Vérification cryptographique
-
-    /// Vérifie la signature Apple de la transaction.
-    /// Lance une erreur si la vérification échoue (transaction falsifiée).
-    private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {
-        switch result {
-        case .unverified:
-            throw StoreError.failedVerification
-        case .verified(let value):
-            return value
-        }
-    }
-
-    // MARK: - Helpers produits
+    // MARK: - Helpers
 
     var coinProducts: [Product] {
         products.filter { $0.type == .consumable }

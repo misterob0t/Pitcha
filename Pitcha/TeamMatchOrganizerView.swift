@@ -248,7 +248,7 @@ struct TeamLocationStep: View {
                 Text("Terrain / Adresse du match")
                     .font(.headline)
                     .foregroundStyle(Pitcha.navy)
-                PitchaTextField(icon: "mappin.and.ellipse", placeholder: "Ex : City Stade de Meaux", text: $address)
+                PitchaTextField(icon: "mappin.and.ellipse", placeholder: "Ex : City Stade", text: $address)
             }
 
             Spacer()

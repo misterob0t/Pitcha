@@ -14,7 +14,66 @@
 
   ],
   "products" : [
-
+    {
+      "displayPrice" : "8.99",
+      "familyShareable" : false,
+      "internalID" : "6786009351",
+      "localizations" : [
+        {
+          "description" : "1000 coins pour rejoindre tes matchs",
+          "displayName" : "Chariot de coins",
+          "locale" : "fr"
+        }
+      ],
+      "productID" : "com.adil.pitcha.coins.xlarge",
+      "referenceName" : "Chariot de coins",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "3.99",
+      "familyShareable" : false,
+      "internalID" : "6786009205",
+      "localizations" : [
+        {
+          "description" : "400 coins pour rejoindre tes matchs",
+          "displayName" : "Coffre de coins",
+          "locale" : "fr"
+        }
+      ],
+      "productID" : "com.adil.pitcha.coins.large",
+      "referenceName" : "Coffre de coins",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "6786007459",
+      "localizations" : [
+        {
+          "description" : "50 coins pour rejoindre tes matchs",
+          "displayName" : "Poignée de coins",
+          "locale" : "fr"
+        }
+      ],
+      "productID" : "com.adil.pitcha.coins.small",
+      "referenceName" : "Poignée de coins",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "1.99",
+      "familyShareable" : false,
+      "internalID" : "6786008637",
+      "localizations" : [
+        {
+          "description" : "150 coins pour rejoindre tes matchs",
+          "displayName" : "Sac de coins",
+          "locale" : "fr"
+        }
+      ],
+      "productID" : "com.adil.pitcha.coins.medium",
+      "referenceName" : "Sac de coins",
+      "type" : "Consumable"
+    }
   ],
   "settings" : {
     "_applicationInternalID" : "6785583181",
@@ -24,17 +83,81 @@
     "_developerTeamID" : "M3JU8AHSQP",
     "_disableDialogs" : false,
     "_failTransactionsEnabled" : false,
-    "_locale" : "en_US",
+    "_lastSynchronizedDate" : 804537462.54070997,
+    "_locale" : "fr",
     "_renewalBillingIssuesEnabled" : false,
-    "_shouldSetupSyncOnLoad" : true,
-    "_storefront" : "USA",
+    "_storefront" : "FRA",
     "_storeKitErrors" : [
 
     ],
     "_timeRate" : 0
   },
   "subscriptionGroups" : [
+    {
+      "id" : "22200159",
+      "localizations" : [
 
+      ],
+      "name" : "Pitcha Premium",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "17.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "6786011467",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Matchs gratuits, XP ×1,5, badge Premium, coins offerts.",
+              "displayName" : "Pitcha Premium",
+              "locale" : "fr"
+            }
+          ],
+          "productID" : "com.adil.pitcha.premium.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Premium Annuel",
+          "subscriptionGroupID" : "22200159",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "2.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6786011545",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Matchs gratuits, XP ×1,5, badge Premium, coins offerts.",
+              "displayName" : "Premium Premium",
+              "locale" : "fr"
+            }
+          ],
+          "productID" : "com.adil.pitcha.premium.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Premium Mensuel",
+          "subscriptionGroupID" : "22200159",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
   ],
   "version" : {
     "major" : 4,

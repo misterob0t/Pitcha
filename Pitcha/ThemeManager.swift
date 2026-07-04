@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// Gère le thème visuel global de l'app. Persiste le choix entre les
 /// sessions et notifie toute la hiérarchie de vues lors du changement

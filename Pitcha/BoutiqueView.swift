@@ -42,13 +42,15 @@ struct BoutiqueView: View {
                 }
                 .task {
                     await viewModel.onAppear()
-                    // Navigation demandée depuis un autre onglet (ex: taper
-                    // sur le solde de coins) : ouvre directement Coins puis
-                    // consomme la demande pour ne pas la rejouer ensuite.
-                    if let requested = router.pendingBoutiqueCategory {
-                        viewModel.selectedCategory = requested
-                        router.pendingBoutiqueCategory = nil
-                    }
+                }
+                // Synchro bidirectionnelle avec le router pour que le swipe
+                // global (Coins <-> Équipe...) et le tap direct sur les tabs
+                // Premium/Coins restent toujours cohérents entre eux.
+                .onChange(of: viewModel.selectedCategory) { _, newValue in
+                    if router.boutiqueCategory != newValue { router.boutiqueCategory = newValue }
+                }
+                .onChange(of: router.boutiqueCategory) { _, newValue in
+                    if viewModel.selectedCategory != newValue { viewModel.selectedCategory = newValue }
                 }
             }
             .background(
@@ -157,6 +159,26 @@ private struct PremiumPage: View {
                     .foregroundStyle(Pitcha.teal)
                     .underline()
             }
+            .padding(.bottom, 4)
+
+            // Liens CGU / Confidentialité — requis par Apple (règle 3.1.2)
+            // pour tout écran d'abonnement auto-renouvelable.
+            HStack(spacing: 6) {
+                NavigationLink {
+                    TermsOfServiceView()
+                } label: {
+                    Text("CGU")
+                }
+                Text("·")
+                    .foregroundStyle(.secondary.opacity(0.5))
+                NavigationLink {
+                    PrivacyPolicyView()
+                } label: {
+                    Text("Confidentialité")
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
             .padding(.bottom, 8)
 
             Text("Paiements gérés par Apple. L'abonnement se renouvelle automatiquement sauf résiliation 24h avant la date d'échéance.")

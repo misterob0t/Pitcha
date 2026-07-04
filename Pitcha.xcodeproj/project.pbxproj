@@ -12,6 +12,7 @@
 		C5838D062FD8D88A00751052 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = C5838D052FD8D88A00751052 /* FirebaseDatabase */; };
 		C5838D082FD8D88A00751052 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = C5838D072FD8D88A00751052 /* FirebaseFirestore */; };
 		C5838D0E2FD8D88A00751052 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = C5838D0D2FD8D88A00751052 /* FirebaseStorage */; };
+		C5B1DBA02FDE6A9B0046FB10 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = C5B1DB9F2FDE6A9B0046FB10 /* FirebaseMessaging */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,31 +39,20 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		C5B4A5EC2FDCD10200576B35 /* Exceptions for "Pitcha" folder in "Pitcha" target */ = {
+		C591B5BA2FDE029E0095DDFA /* Exceptions for "Pitcha" folder in "Pitcha" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				.swift,
+				Info.plist,
 			);
 			target = C5838CC32FD8D69F00751052 /* Pitcha */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		C5B4A5ED2FDCD10200576B35 /* Exceptions for "Pitcha" folder in "Compile Sources" phase from "Pitcha" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			buildPhase = C5838CC02FD8D69F00751052 /* Sources */;
-			membershipExceptions = (
-				.swift,
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		C5838CC62FD8D69F00751052 /* Pitcha */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				C5B4A5EC2FDCD10200576B35 /* Exceptions for "Pitcha" folder in "Pitcha" target */,
-				C5B4A5ED2FDCD10200576B35 /* Exceptions for "Pitcha" folder in "Compile Sources" phase from "Pitcha" target */,
+				C591B5BA2FDE029E0095DDFA /* Exceptions for "Pitcha" folder in "Pitcha" target */,
 			);
 			path = Pitcha;
 			sourceTree = "<group>";
@@ -84,6 +74,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C5B1DBA02FDE6A9B0046FB10 /* FirebaseMessaging in Frameworks */,
 				C5838D062FD8D88A00751052 /* FirebaseDatabase in Frameworks */,
 				C5838D0E2FD8D88A00751052 /* FirebaseStorage in Frameworks */,
 				C5838D022FD8D88A00751052 /* FirebaseAuth in Frameworks */,
@@ -115,6 +106,7 @@
 				C5838CC62FD8D69F00751052 /* Pitcha */,
 				C5838CD62FD8D6A100751052 /* PitchaTests */,
 				C5838CE02FD8D6A200751052 /* PitchaUITests */,
+				C5B1DB9E2FDE6A9B0046FB10 /* Frameworks */,
 				C5838CC52FD8D69F00751052 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -127,6 +119,13 @@
 				C5838CDD2FD8D6A200751052 /* PitchaUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		C5B1DB9E2FDE6A9B0046FB10 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -154,6 +153,7 @@
 				C5838D052FD8D88A00751052 /* FirebaseDatabase */,
 				C5838D072FD8D88A00751052 /* FirebaseFirestore */,
 				C5838D0D2FD8D88A00751052 /* FirebaseStorage */,
+				C5B1DB9F2FDE6A9B0046FB10 /* FirebaseMessaging */,
 			);
 			productName = Pitcha;
 			productReference = C5838CC42FD8D69F00751052 /* Pitcha.app */;
@@ -441,13 +441,17 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Pitcha/Pitcha.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = L9A4X8GTR2;
+				DEVELOPMENT_TEAM = M3JU8AHSQP;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pitcha/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pitcha;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Pitcha utilise Photos pour ta carte joueur.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -458,9 +462,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = adil.Pitcha;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.adil.pitcha;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -480,13 +485,17 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Pitcha/Pitcha.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = L9A4X8GTR2;
+				DEVELOPMENT_TEAM = M3JU8AHSQP;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pitcha/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pitcha;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Pitcha utilise Photos pour ta carte joueur.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -497,9 +506,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = adil.Pitcha;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.adil.pitcha;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -675,6 +685,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C5838CFC2FD8D88A00751052 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseStorage;
+		};
+		C5B1DB9F2FDE6A9B0046FB10 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C5838CFC2FD8D88A00751052 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

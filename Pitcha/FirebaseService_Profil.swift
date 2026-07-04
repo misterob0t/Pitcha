@@ -90,9 +90,11 @@ extension FirebaseService {
     }
 
     /// Crée le document Firestore pour un nouvel utilisateur (phone auth).
+    /// ⚠️ "Paris" en valeur par défaut le temps que le flux d'inscription
+    /// par téléphone ait son propre sélecteur de ville (pas encore construit).
     func createNewUser(uid: String, pseudo: String) async throws {
         guard !(try await usersRef.document(uid).getDocument()).exists else { return }
-        var user = AppUser.new(uid: uid, pseudo: pseudo, email: "")
+        var user = AppUser.new(uid: uid, pseudo: pseudo, email: "", city: "Paris")
         // @DocumentID doit rester nil à l'écriture, voir signUp() pour le détail.
         user.id = nil
         try usersRef.document(uid).setData(from: user)

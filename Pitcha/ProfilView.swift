@@ -89,12 +89,14 @@ struct ProfilView: View {
                         .onTapGesture { showSkillsSheet = true }
 
                     Spacer(minLength: 0)
+                        .frame(maxHeight: 22)
 
                     // Carte FIFA (largeur carte, pas pleine largeur)
                     FlippablePlayerCard(user: user, viewModel: viewModel)
                         .frame(maxWidth: 300)
 
                     Spacer(minLength: 0)
+                        .frame(maxHeight: 22)
 
                     // Stats (cliquables -> historique)
                     HStack(spacing: 12) {
@@ -111,7 +113,7 @@ struct ProfilView: View {
                     .padding(.horizontal)
                 }
                 .padding(.top, 4)
-                .padding(.bottom, 8)
+                .padding(.bottom, 28)
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -440,7 +442,6 @@ struct FifaCardFront: View {
                     .contentTransition(.numericText())
             }
 
-            // Badge Premium discret sous la note
             if user.hasPremium {
                 HStack(spacing: 3) {
                     Image(systemName: "crown.fill")
@@ -909,7 +910,65 @@ struct StatCard: View {
     }
 }
 
-// MARK: - Sheet distribution des points (sous-attributs groupés)
+// MARK: - Sheet distribution des points — design "skill tree" par famille de
+// stat, jauges circulaires et couleurs dédiées, plus de vie qu'un accordéon plat.
+
+/// Identité visuelle par famille de stat (icône + dégradé de couleur).
+enum StatFamilyStyle {
+    static func icon(for key: String) -> String {
+        switch key {
+        case "VIT": return "bolt.fill"
+        case "TIR": return "scope"
+        case "PAS": return "arrow.triangle.branch"
+        case "DRI": return "wind"
+        case "DEF": return "shield.fill"
+        case "PHY": return "figure.strengthtraining.traditional"
+        default:    return "star.fill"
+        }
+    }
+
+    static func colors(for key: String) -> [Color] {
+        switch key {
+        case "VIT": return [Color(hex: "FFD54F"), Color(hex: "FF9800")]
+        case "TIR": return [Color(hex: "FF6B6B"), Color(hex: "C0392B")]
+        case "PAS": return [Color(hex: "4FC3F7"), Color(hex: "1976D2")]
+        case "DRI": return [Color(hex: "BA68C8"), Color(hex: "7B1FA2")]
+        case "DEF": return [Pitcha.teal, Pitcha.navy]
+        case "PHY": return [Color(hex: "81C784"), Color(hex: "2E7D32")]
+        default:    return [Pitcha.teal, Pitcha.tealDark]
+        }
+    }
+}
+
+/// Jauge circulaire compacte (valeur / 99) utilisée sur chaque en-tête de famille.
+struct StatRingGauge: View {
+    let value: Int
+    let colors: [Color]
+    var size: CGFloat = 46
+
+    private var progress: CGFloat { CGFloat(value) / 99.0 }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.black.opacity(0.08), lineWidth: 5)
+            Circle()
+                .trim(from: 0, to: max(0.03, progress))
+                .stroke(
+                    LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing),
+                    style: StrokeStyle(lineWidth: 5, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .animation(.snappy, value: value)
+            Text("\(value)")
+                .font(.system(size: size * 0.34, weight: .heavy, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .foregroundStyle(Pitcha.navy)
+        }
+        .frame(width: size, height: size)
+    }
+}
 
 struct SkillsSheet: View {
     @ObservedObject var viewModel: ProfilViewModel
@@ -920,22 +979,45 @@ struct SkillsSheet: View {
             ScrollView {
                 if let user = session.user {
                     VStack(spacing: 16) {
-                        // En-tête points dispo
-                        HStack {
-                            Text("Points disponibles")
-                                .font(.headline)
-                            Spacer()
-                            Text("\(viewModel.remainingPoints(user: user))")
-                                .font(.title3.weight(.heavy))
-                                .monospacedDigit()
-                                .contentTransition(.numericText())
-                                .foregroundStyle(viewModel.remainingPoints(user: user) > 0 ? Pitcha.teal : .secondary)
-                        }
-                        .padding(16)
-                        .background(Color(.secondarySystemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        // En-tête points dispo — carte hero façon "coffre à points"
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 24)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Pitcha.navy, Color(hex: "1E3A5F")],
+                                        startPoint: .topLeading, endPoint: .bottomTrailing
+                                    )
+                                )
+                            ParticlesView()
+                                .clipShape(RoundedRectangle(cornerRadius: 24))
 
-                        // Groupes de sous-attributs
+                            HStack(spacing: 14) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Pitcha.goldGradient)
+                                        .frame(width: 54, height: 54)
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 22, weight: .bold))
+                                        .foregroundStyle(.white)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Points disponibles")
+                                        .font(.caption)
+                                        .foregroundStyle(.white.opacity(0.75))
+                                    Text("\(viewModel.remainingPoints(user: user))")
+                                        .font(.system(size: 30, weight: .black, design: .rounded))
+                                        .monospacedDigit()
+                                        .contentTransition(.numericText())
+                                        .foregroundStyle(.white)
+                                }
+                                Spacer()
+                            }
+                            .padding(18)
+                        }
+                        .frame(height: 90)
+                        .shadow(color: Pitcha.navy.opacity(0.3), radius: 12, y: 6)
+
+                        // Groupes de sous-attributs — une carte colorée par famille
                         ForEach(SubAttributes.groups, id: \.main) { group in
                             SubAttributeGroup(
                                 mainKey: group.main,
@@ -955,6 +1037,7 @@ struct SkillsSheet: View {
                     .padding(.bottom, viewModel.hasPendingChanges ? 80 : 0)
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Ma progression")
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
@@ -998,7 +1081,7 @@ struct SkillsSheet: View {
     }
 }
 
-// MARK: - Groupe de sous-attributs dépliable
+// MARK: - Groupe de sous-attributs dépliable — carte colorée par famille
 
 struct SubAttributeGroup: View {
     let mainKey: String
@@ -1008,22 +1091,35 @@ struct SubAttributeGroup: View {
 
     @State private var isExpanded = false
 
+    private var colors: [Color] { StatFamilyStyle.colors(for: mainKey) }
+    private var icon: String { StatFamilyStyle.icon(for: mainKey) }
+
     var body: some View {
         VStack(spacing: 0) {
-            // En-tête : stat principale + moyenne live
+            // En-tête : icône famille + jauge circulaire + nom
             Button {
                 withAnimation(.snappy) { isExpanded.toggle() }
             } label: {
-                HStack {
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                            .frame(width: 40, height: 40)
+                        Image(systemName: icon)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+
                     Text(mainKey)
                         .font(.headline.weight(.heavy))
                         .foregroundStyle(Pitcha.navy)
+
                     Spacer()
-                    Text("\(viewModel.draftMainValue(for: mainKey, user: user))")
-                        .font(.headline.weight(.heavy))
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-                        .foregroundStyle(Pitcha.teal)
+
+                    StatRingGauge(value: viewModel.draftMainValue(for: mainKey, user: user), colors: colors, size: 44)
+
                     Image(systemName: "chevron.down")
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
@@ -1033,51 +1129,101 @@ struct SubAttributeGroup: View {
             }
 
             if isExpanded {
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     ForEach(subs, id: \.key) { sub in
-                        HStack {
-                            Text(sub.label)
-                                .font(.subheadline)
-                            Spacer()
-                            Text("\(viewModel.draftValue(forSub: sub.key, user: user))")
-                                .font(.subheadline.bold())
-                                .monospacedDigit()
-                                .contentTransition(.numericText())
-                                .frame(width: 32)
-
-                            Button {
-                                withAnimation(.snappy) { viewModel.removePoint(fromSub: sub.key) }
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                                    .font(.title3)
-                                    .foregroundStyle((viewModel.spent[sub.key] ?? 0) > 0 ? .orange : .gray.opacity(0.3))
-                            }
-                            .disabled((viewModel.spent[sub.key] ?? 0) == 0)
-
-                            Button {
-                                withAnimation(.snappy) { viewModel.addPoint(toSub: sub.key, user: user) }
-                            } label: {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.title3)
-                                    .foregroundStyle(canAdd(sub.key) ? Pitcha.teal : .gray.opacity(0.3))
-                            }
-                            .disabled(!canAdd(sub.key))
-                        }
+                        SubAttributeRow(
+                            label: sub.label,
+                            value: viewModel.draftValue(forSub: sub.key, user: user),
+                            colors: colors,
+                            canRemove: (viewModel.spent[sub.key] ?? 0) > 0,
+                            canAdd: canAdd(sub.key),
+                            onRemove: { withAnimation(.snappy) { viewModel.removePoint(fromSub: sub.key) } },
+                            onAdd: { withAnimation(.snappy) { viewModel.addPoint(toSub: sub.key, user: user) } }
+                        )
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 14)
+                .padding(.bottom, 16)
                 .transition(.opacity)
             }
         }
         .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .strokeBorder(colors[0].opacity(isExpanded ? 0.35 : 0), lineWidth: 1.5)
+        )
     }
 
     private func canAdd(_ key: String) -> Bool {
         viewModel.remainingPoints(user: user) > 0 && viewModel.draftValue(forSub: key, user: user) < 99
     }
 }
+
+// MARK: - Ligne de sous-attribut — barre capsule colorée + boutons ronds
+
+struct SubAttributeRow: View {
+    let label: String
+    let value: Int
+    let colors: [Color]
+    let canRemove: Bool
+    let canAdd: Bool
+    let onRemove: () -> Void
+    let onAdd: () -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Pitcha.navy)
+                Spacer()
+                Text("\(value)")
+                    .font(.subheadline.weight(.heavy))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .foregroundStyle(colors[1])
+            }
+
+            HStack(spacing: 10) {
+                Button(action: onRemove) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 12, weight: .heavy))
+                        .foregroundStyle(canRemove ? .white : .secondary.opacity(0.4))
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(canRemove ? AnyShapeStyle(Color.orange) : AnyShapeStyle(Color.gray.opacity(0.15))))
+                }
+                .disabled(!canRemove)
+
+                // Barre capsule colorée façon jauge de compétence
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.black.opacity(0.07))
+                        Capsule()
+                            .fill(LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing))
+                            .frame(width: geo.size.width * CGFloat(value) / 99.0)
+                            .animation(.snappy, value: value)
+                    }
+                }
+                .frame(height: 8)
+
+                Button(action: onAdd) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .heavy))
+                        .foregroundStyle(canAdd ? .white : .secondary.opacity(0.4))
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(canAdd ? AnyShapeStyle(LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)) : AnyShapeStyle(Color.gray.opacity(0.15))))
+                }
+                .disabled(!canAdd)
+            }
+        }
+        .padding(10)
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+}
+
 
 
 

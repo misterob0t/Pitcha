@@ -23,21 +23,39 @@ final class ClassementViewModel: ObservableObject {
         isLoading = players.isEmpty
         errorMessage = nil
         do {
-            // 1 lecture au lieu de 50+ : on tente d'abord le classement
-            // précalculé par la Cloud Function planifiée.
-            if let precomputed = try await service.fetchPrecomputedLeaderboard() {
-                players = precomputed
-            } else {
-                // Repli : calcul live (coûteux), seulement si le précalculé
-                // est absent ou trop vieux.
-                let fetched = try await service.fetchLeaderboard(limit: 50)
-                players = fetched.sorted { ($0.totalGoals, $0.xp) > ($1.totalGoals, $1.xp) }
-            }
-            if let user {
-                if let index = players.firstIndex(where: { $0.id == user.id }) {
-                    myRank = index + 1
+            switch scope {
+            case .regional:
+                // Classement filtré à la ville de l'utilisateur — jamais
+                // mélangé avec les autres villes. Si l'utilisateur n'a pas
+                // encore de ville renseignée (ancien compte créé avant
+                // l'ajout de ce champ), on retombe sur Paris par défaut
+                // plutôt que de planter.
+                let city = user?.city ?? "Paris"
+                players = try await service.fetchRegionalLeaderboard(city: city)
+                if let user {
+                    if let index = players.firstIndex(where: { $0.id == user.id }) {
+                        myRank = index + 1
+                    } else {
+                        myRank = try await service.fetchRegionalRankByGoals(city: city, goals: user.totalGoals)
+                    }
+                }
+            case .national, .mondial:
+                // 1 lecture au lieu de 50+ : on tente d'abord le classement
+                // précalculé par la Cloud Function planifiée.
+                if let precomputed = try await service.fetchPrecomputedLeaderboard() {
+                    players = precomputed
                 } else {
-                    myRank = try await service.fetchRankByGoals(goals: user.totalGoals)
+                    // Repli : calcul live (coûteux), seulement si le précalculé
+                    // est absent ou trop vieux.
+                    let fetched = try await service.fetchLeaderboard(limit: 50)
+                    players = fetched.sorted { ($0.totalGoals, $0.xp) > ($1.totalGoals, $1.xp) }
+                }
+                if let user {
+                    if let index = players.firstIndex(where: { $0.id == user.id }) {
+                        myRank = index + 1
+                    } else {
+                        myRank = try await service.fetchRankByGoals(goals: user.totalGoals)
+                    }
                 }
             }
         } catch { errorMessage = error.localizedDescription }

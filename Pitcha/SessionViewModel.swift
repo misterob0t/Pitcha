@@ -23,6 +23,11 @@ final class SessionViewModel: ObservableObject {
     /// l'app (une seule fois par compte, jamais aux connexions suivantes).
     @Published var showWelcomeBonus = false
 
+    /// Renseigné quand cet appareil est déconnecté automatiquement parce
+    /// qu'une connexion plus récente a eu lieu sur un autre appareil.
+    /// Affiché sous forme d'alerte par AuthView.
+    @Published var forcedLogoutMessage: String? = nil
+
     private let service = FirebaseService.shared
     private var authHandle: AuthStateDidChangeListenerHandle?
     private var userListener: ListenerRegistration?
@@ -68,8 +73,37 @@ final class SessionViewModel: ObservableObject {
 
     private func attachUserListener(uid: String) {
         userListener?.remove()
-        userListener = service.listenUser(uid: uid) { [weak self] user in
-            Task { @MainActor in self?.user = user }
+        userListener = service.listenUser(uid: uid) { [weak self] fetchedUser, isFromCache in
+            Task { @MainActor in
+                guard let self else { return }
+
+                // Vérification "une seule session à la fois" (façon Snapchat) :
+                // UNIQUEMENT sur un snapshot confirmé par le serveur. Le tout
+                // premier snapshot reçu après une connexion vient souvent du
+                // cache local et reflète encore l'ANCIENNE session (avant notre
+                // propre écriture) — le comparer aurait fait se déconnecter
+                // l'appareil qui vient tout juste de se connecter, même seul.
+                if !isFromCache, let fetchedUser {
+                    let sessionKey = "pitcha.sessionId.\(uid)"
+                    if let remoteSession = fetchedUser.activeSessionId {
+                        if let mySession = UserDefaults.standard.string(forKey: sessionKey) {
+                            if mySession != remoteSession {
+                                self.forcedLogoutMessage = "Tu as été déconnecté car ton compte a été utilisé sur un autre appareil."
+                                self.signOut()
+                                return
+                            }
+                        } else {
+                            // Aucune session locale connue pour ce compte sur cet
+                            // appareil (ex: tout premier lancement après un signUp
+                            // très récent) : on adopte celle du serveur sans se
+                            // déconnecter soi-même par erreur.
+                            UserDefaults.standard.set(remoteSession, forKey: sessionKey)
+                        }
+                    }
+                }
+
+                self.user = fetchedUser
+            }
         }
         // Backfill ponctuel : si le compte a été créé avant l'ajout du champ
         // pseudoLower, on le renseigne automatiquement à la connexion pour
@@ -99,9 +133,9 @@ final class SessionViewModel: ObservableObject {
 
     // MARK: - Actions email/password
 
-    func signUp(email: String, password: String, pseudo: String, gender: Gender) async {
+    func signUp(email: String, password: String, pseudo: String, gender: Gender, city: String) async {
         await run {
-            try await self.service.signUp(email: email, password: password, pseudo: pseudo, gender: gender)
+            try await self.service.signUp(email: email, password: password, pseudo: pseudo, gender: gender, city: city)
         }
         // Uniquement si l'inscription a réussi (pas d'erreur en attente)
         if errorMessage == nil {
