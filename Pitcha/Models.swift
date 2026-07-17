@@ -10,6 +10,7 @@ enum XPSystem {
     static let xpPerWin = 1500
     static let xpPerGoal = 500
     static let skillPointsPerLevel = 5
+    static let mvpBonusXP = 250
 
     /// Seuils d'XP requis pour chaque niveau (index 0 = niveau 1).
     static let levelThresholds: [Int] = [
@@ -54,6 +55,122 @@ enum XPSystem {
 
     static func xpGain(won: Bool, goals: Int) -> Int {
         xpPerParticipation + (won ? xpPerWin : 0) + goals * xpPerGoal
+    }
+}
+
+// MARK: - Système Classé (PL) — séparé de l'XP, mesure le niveau de jeu réel
+// plutôt que l'assiduité. 12 divisions calquées sur la pyramide du foot
+// amateur français, pour que ça parle à un joueur français plutôt qu'un
+// nom de ligue inventé.
+
+enum RankedDivision: String, CaseIterable, Codable, Comparable {
+    case district3, district2, district1
+    case regional3, regional2, regional1
+    case national3, national2, national1
+    case ligue3, ligue2, ligue1
+
+    /// Ordre de progression, du plus bas au plus haut — sert aussi de
+    /// base à Comparable pour les comparaisons de division.
+    var order: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+
+    static func < (lhs: RankedDivision, rhs: RankedDivision) -> Bool { lhs.order < rhs.order }
+
+    var displayName: String {
+        switch self {
+        case .district3: return "District 3"
+        case .district2: return "District 2"
+        case .district1: return "District 1"
+        case .regional3: return "Régional 3"
+        case .regional2: return "Régional 2"
+        case .regional1: return "Régional 1"
+        case .national3: return "National 3"
+        case .national2: return "National 2"
+        case .national1: return "National 1"
+        case .ligue3:    return "Ligue 3"
+        case .ligue2:    return "Ligue 2"
+        case .ligue1:    return "Ligue 1"
+        }
+    }
+
+    /// Étage de la pyramide (0=District, 1=Régional, 2=National, 3=Ligue) —
+    /// sert à grouper visuellement les 12 divisions par 3 sur la carte.
+    var tier: Int { order / 3 }
+
+    /// Code court affiché sur la carte joueur (ex: "D3", "R1", "L1").
+    var shortCode: String {
+        switch self {
+        case .district3: return "D3"
+        case .district2: return "D2"
+        case .district1: return "D1"
+        case .regional3: return "R3"
+        case .regional2: return "R2"
+        case .regional1: return "R1"
+        case .national3: return "N3"
+        case .national2: return "N2"
+        case .national1: return "N1"
+        case .ligue3:    return "L3"
+        case .ligue2:    return "L2"
+        case .ligue1:    return "L1"
+        }
+    }
+
+    /// Couleur du palier : bronze (District), argent (Régional), or (National), diamant (Ligue).
+    var tierColors: [Color] {
+        switch tier {
+        case 0: return [Color(hex: "CD7F32"), Color(hex: "8B5A2B")]
+        case 1: return [Color(hex: "E0E0E0"), Color(hex: "9C9C9C")]
+        case 2: return [Color(hex: "FFD700"), Color(hex: "B8860B")]
+        default: return [Color(hex: "B9F2FF"), Color(hex: "3FA9D8")]
+        }
+    }
+
+    var next: RankedDivision? {
+        let all = Self.allCases
+        let i = order + 1
+        return i < all.count ? all[i] : nil
+    }
+
+    var previous: RankedDivision? {
+        let i = order - 1
+        return i >= 0 ? Self.allCases[i] : nil
+    }
+}
+
+enum RankedSystem {
+    static let promotionThreshold = 100    // PL requis pour monter de division
+    static let relegationFloor = 0         // en dessous : rétrogradation à la prochaine défaite
+    static let relegationRestartPL = 50    // PL de redémarrage après rétrogradation
+    static let placementMatchesRequired = 5
+    /// Plafond de placement : personne ne peut débuter plus haut que ça,
+    /// même avec 5 victoires sur 5 en placement.
+    static let placementCeiling: RankedDivision = .district1
+
+    static let winPL = 15
+    static let lossPL = -15
+    static let lossPLWithGoals = -10       // amorti si 2+ buts marqués malgré la défaite
+    static let drawPL = 2
+    static let perGoalPL = 1
+    static let maxGoalBonusPL = 5
+    static let mvpBonusPL = 10
+
+    /// PL gagnés/perdus pour un match Classé donné (hors placement).
+    static func plChange(won: Bool, drawn: Bool, goals: Int) -> Int {
+        let goalBonus = min(goals, maxGoalBonusPL) * perGoalPL
+        if won { return winPL + goalBonus }
+        if drawn { return drawPL + goalBonus }
+        // Défaite : amortie si la perf individuelle (buts) est bonne malgré tout.
+        let base = goals >= 2 ? lossPLWithGoals : lossPL
+        return base + goalBonus
+    }
+
+    /// Division de départ à l'issue des 5 games de placement, plafonnée.
+    static func placementResult(wins: Int) -> RankedDivision {
+        // 0-1 victoire -> District 3, 2 -> District 2, 3+ -> District 1 (plafond)
+        switch wins {
+        case 0, 1: return .district3
+        case 2:    return .district2
+        default:   return placementCeiling
+        }
     }
 }
 
@@ -252,6 +369,62 @@ struct AppUser: Identifiable, Codable {
     var premiumExpiresAt: Date? = nil      // date d'expiration de l'abonnement
     var city: String? = nil                // ville de résidence choisie à l'inscription — sert au classement Régional
     var activeSessionId: String? = nil     // identifiant de la session active — permet de forcer la déconnexion des autres appareils
+
+    // ===== Système Classé (séparé de l'XP/carte) =====
+    var rankedDivision: String? = nil      // nil = pas encore placé (games de placement à faire)
+    var rankedPL: Int? = nil               // points dans la division actuelle (0-99)
+    var rankedPlacementsPlayed: Int? = nil // 0 à 5
+    var rankedPlacementWins: Int? = nil    // sert à calculer la division de départ
+
+    // ===== Bilan de saison Classé (dos de la carte) =====
+    var rankedWins: Int? = nil
+    var rankedDraws: Int? = nil
+    var rankedLosses: Int? = nil
+    var bestDivisionReached: String? = nil // meilleure division jamais atteinte (rawValue RankedDivision)
+    var currentStreakType: String? = nil   // "win" | "loss" — nil si pas de série en cours
+    var currentStreakCount: Int? = nil
+    var mvpCount: Int? = nil               // nombre de fois élu MVP (matchs Classé)
+
+    // ===== Infos joueur (sheet séparée de la carte) =====
+    var age: Int? = nil                    // optionnel, éditable dans le profil
+    var reliabilitySum: Int? = nil         // somme des notes reçues (1-5 par vote)
+    var reliabilityCount: Int? = nil       // nombre de votes reçus
+    var clubIds: [String]? = nil           // clubs Classé dont ce joueur fait partie (max 3)
+    var clubIdsValue: [String] { clubIds ?? [] }
+
+    /// Accesseurs non-optionnels pratiques — les champs restent optionnels
+    /// au stockage (comptes créés avant cette fonctionnalité), mais tout le
+    /// reste du code peut lire des valeurs par défaut sûres.
+    var rankedPLValue: Int { rankedPL ?? 0 }
+    var rankedPlacementsPlayedValue: Int { rankedPlacementsPlayed ?? 0 }
+    var rankedPlacementWinsValue: Int { rankedPlacementWins ?? 0 }
+    var reliabilitySumValue: Int { reliabilitySum ?? 0 }
+    var reliabilityCountValue: Int { reliabilityCount ?? 0 }
+    var rankedWinsValue: Int { rankedWins ?? 0 }
+    var rankedDrawsValue: Int { rankedDraws ?? 0 }
+    var rankedLossesValue: Int { rankedLosses ?? 0 }
+    var mvpCountValue: Int { mvpCount ?? 0 }
+    var bestDivisionReachedEnum: RankedDivision? { bestDivisionReached.flatMap { RankedDivision(rawValue: $0) } }
+
+    /// Description courte de la série en cours, ex: "3 victoires d'affilée".
+    var streakDescription: String? {
+        guard let type = currentStreakType, let count = currentStreakCount, count > 0 else { return nil }
+        let word = type == "win" ? "victoire" : "défaite"
+        return "\(count) \(word)\(count > 1 ? "s" : "") d'affilée"
+    }
+
+    /// Note moyenne de fiabilité, affichée seulement à partir de 5 votes
+    /// pour éviter qu'un seul avis (positif ou négatif) ne fasse basculer
+    /// l'affichage d'un compte encore récent.
+    var reliabilityAverage: Double? {
+        guard reliabilityCountValue >= 5 else { return nil }
+        return Double(reliabilitySumValue) / Double(reliabilityCountValue)
+    }
+
+    /// Division actuelle sous forme typée, nil tant que le placement n'est pas terminé.
+    var rankedDivisionEnum: RankedDivision? {
+        rankedDivision.flatMap { RankedDivision(rawValue: $0) }
+    }
 
     // MARK: Calculés
 
@@ -461,6 +634,9 @@ struct Match: Identifiable, Codable {
     var slotAssignments: [String: Int]? = nil  // uid -> slot choisi sur la feuille
     var scoreSubmittedAt: Date? = nil            // timestamp de la soumission du score
     var validationVotes: [String: String]? = nil // uid -> "validate"|"contest" (cache rapide)
+    var isRanked: Bool? = nil          // match Classé (PL) vs Normal (XP) — jamais les deux
+    var isRankedMatch: Bool { isRanked ?? false }
+    var mvpUid: String? = nil          // désigné à la clôture, majorité des votes MVP
 
     var isFull: Bool { participants.count >= maxPlayers }
     var isPrivateMatch: Bool { isPrivate ?? false }
@@ -517,6 +693,28 @@ struct Team: Identifiable, Codable {
     var crestColorName: String? = nil   // couleur de l'écusson
 }
 
+// MARK: - Club Classé (roster fixe, sert à rejoindre un match Classé)
+
+struct Club: Identifiable, Codable {
+    @DocumentID var id: String?
+    var name: String
+    var captainId: String
+    var starterIds: [String]        // titulaires — max 5
+    var substituteIds: [String]     // remplaçants — max 3
+    var createdAt: Date
+    var crestIcon: String? = nil
+    var crestColorName: String? = nil
+
+    static let maxStarters = 5
+    static let maxSubstitutes = 3
+    static let maxClubsPerUser = 3
+
+    var rosterCount: Int { starterIds.count + substituteIds.count }
+    var isFull: Bool { starterIds.count >= Self.maxStarters && substituteIds.count >= Self.maxSubstitutes }
+    /// Prêt à jouer un match Classé : il faut les 5 titulaires au complet.
+    var isReadyForRanked: Bool { starterIds.count >= Self.maxStarters }
+}
+
 enum CrestPalette {
     static let icons = ["shield.fill", "flame.fill", "bolt.fill", "crown.fill", "star.fill", "pawprint.fill", "hare.fill", "tornado"]
     static let colors: [(name: String, color: Color)] = [
@@ -537,7 +735,14 @@ struct MatchRecord: Identifiable, Codable {
     var title: String
     var goals: Int
     var result: String      // "win" / "draw" / "loss"
-    var xpGained: Int
+    var xpGained: Int? = nil       // absent sur les entrées Classé (voir plGained)
+    var ranked: Bool? = nil
+    var plGained: Int? = nil
+    var newDivision: String? = nil
+
+    var isRankedRecord: Bool { ranked ?? false }
+    var xpGainedValue: Int { xpGained ?? 0 }
+    var plGainedValue: Int { plGained ?? 0 }
 
     var resultLabel: String {
         switch result {
@@ -564,4 +769,15 @@ struct ChatMessage: Identifiable, Codable {
     var senderPseudo: String
     var text: String
     var sentAt: Date
+}
+
+// MARK: - Invitation à un match (entre amis)
+
+struct MatchInvite: Identifiable, Codable {
+    @DocumentID var id: String?    // = matchId (une seule invitation active par match/ami)
+    var matchId: String
+    var matchTitle: String
+    var invitedBy: String
+    var invitedByPseudo: String
+    var createdAt: Date
 }

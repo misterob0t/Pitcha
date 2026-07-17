@@ -28,9 +28,13 @@ final class SessionViewModel: ObservableObject {
     /// Affiché sous forme d'alerte par AuthView.
     @Published var forcedLogoutMessage: String? = nil
 
+    /// Invitations à rejoindre un match reçues d'amis (affichées via la cloche).
+    @Published var pendingMatchInvites: [MatchInvite] = []
+
     private let service = FirebaseService.shared
     private var authHandle: AuthStateDidChangeListenerHandle?
     private var userListener: ListenerRegistration?
+    private var matchInvitesListener: ListenerRegistration?
 
     init() {
         listenAuthState()
@@ -39,6 +43,7 @@ final class SessionViewModel: ObservableObject {
     deinit {
         if let authHandle { Auth.auth().removeStateDidChangeListener(authHandle) }
         userListener?.remove()
+        matchInvitesListener?.remove()
         // deinit n'est pas isolé au MainActor : on bascule explicitement
         // dans une Task @MainActor pour appeler le service de présence
         // sans bloquer ni violer l'isolation d'acteur.
@@ -55,6 +60,7 @@ final class SessionViewModel: ObservableObject {
             Task { @MainActor in
                 guard let firebaseUser else {
                     self.detachUserListener()
+                    self.detachMatchInvitesListener()
                     self.stopPresence()
                     self.user = nil
                     self.state = .loggedOut
@@ -62,6 +68,7 @@ final class SessionViewModel: ObservableObject {
                 }
                 if firebaseUser.isEmailVerified {
                     self.attachUserListener(uid: firebaseUser.uid)
+                    self.attachMatchInvitesListener(uid: firebaseUser.uid)
                     self.startPresence(uid: firebaseUser.uid)
                     self.state = .loggedIn
                 } else {
@@ -116,6 +123,29 @@ final class SessionViewModel: ObservableObject {
         userListener = nil
     }
 
+    // MARK: - Invitations à un match (notif locale sur nouvelle invitation uniquement)
+
+    private func attachMatchInvitesListener(uid: String) {
+        matchInvitesListener?.remove()
+        matchInvitesListener = service.listenMatchInvites(uid: uid) { [weak self] invites, hasNewInvite in
+            Task { @MainActor in
+                guard let self else { return }
+                self.pendingMatchInvites = invites
+                if hasNewInvite, let latest = invites.first {
+                    NotificationService.showLocal(
+                        title: "Invitation à un match",
+                        body: "\(latest.invitedByPseudo) t'invite à rejoindre son match."
+                    )
+                }
+            }
+        }
+    }
+
+    private func detachMatchInvitesListener() {
+        matchInvitesListener?.remove()
+        matchInvitesListener = nil
+    }
+
     // MARK: - Présence (statut en ligne)
 
     /// Présence via Realtime Database : écriture uniquement au connect/
@@ -133,9 +163,9 @@ final class SessionViewModel: ObservableObject {
 
     // MARK: - Actions email/password
 
-    func signUp(email: String, password: String, pseudo: String, gender: Gender, city: String) async {
+    func signUp(email: String, password: String, pseudo: String, gender: Gender, city: String, position: PlayerPosition) async {
         await run {
-            try await self.service.signUp(email: email, password: password, pseudo: pseudo, gender: gender, city: city)
+            try await self.service.signUp(email: email, password: password, pseudo: pseudo, gender: gender, city: city, position: position)
         }
         // Uniquement si l'inscription a réussi (pas d'erreur en attente)
         if errorMessage == nil {

@@ -102,46 +102,50 @@ struct EquipesView: View {
         .background(RoundedRectangle(cornerRadius: 18).fill(Color.black.opacity(0.05)))
         .padding(.horizontal)
 
-        if filteredTeams.isEmpty {
-            Spacer()
-            VStack(spacing: 14) {
-                VStack(spacing: -6) {
-                    Text(searchText.isEmpty ? "AUCUNE" : "AUCUN")
-                        .font(.system(size: 44, weight: .black))
-                        .foregroundStyle(Color.gray.opacity(0.25))
-                    Text(searchText.isEmpty ? "ÉQUIPE" : "RÉSULTAT")
-                        .font(.system(size: 52, weight: .black))
-                        .foregroundStyle(Pitcha.navy)
-                }
-                Rectangle()
-                    .fill(Pitcha.mint)
-                    .frame(width: 80, height: 4)
-                    .clipShape(Capsule())
-                if searchText.isEmpty {
-                    Text("Crée ta première équipe\net invite tes potes.")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 4)
-                }
-            }
-            Spacer()
-            Spacer()
-        } else {
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(filteredTeams) { team in
-                        NavigationLink {
-                            TeamDetailView(team: team)
-                        } label: {
-                            TeamRow(team: team, isOwner: team.ownerId == session.user?.id)
+        ScrollView {
+            VStack(spacing: 24) {
+                if filteredTeams.isEmpty {
+                    VStack(spacing: 14) {
+                        VStack(spacing: -6) {
+                            Text(searchText.isEmpty ? "AUCUNE" : "AUCUN")
+                                .font(.system(size: 44, weight: .black))
+                                .foregroundStyle(Color.gray.opacity(0.25))
+                            Text(searchText.isEmpty ? "ÉQUIPE" : "RÉSULTAT")
+                                .font(.system(size: 52, weight: .black))
+                                .foregroundStyle(Pitcha.navy)
                         }
-                        .buttonStyle(.plain)
+                        Rectangle()
+                            .fill(Pitcha.mint)
+                            .frame(width: 80, height: 4)
+                            .clipShape(Capsule())
+                        if searchText.isEmpty {
+                            Text("Crée ta première équipe\net invite tes potes.")
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.top, 4)
+                        }
                     }
+                    .padding(.top, 30)
+                } else {
+                    LazyVStack(spacing: 12) {
+                        ForEach(filteredTeams) { team in
+                            NavigationLink {
+                                TeamDetailView(team: team)
+                            } label: {
+                                TeamRow(team: team, isOwner: team.ownerId == session.user?.id)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 90)
+
+                // ───── Clubs Classé — toujours visible, peu importe les équipes ─────
+                RankedClubsSection()
+                    .padding(.horizontal)
             }
+            .padding(.bottom, 90)
         }
     }
 }

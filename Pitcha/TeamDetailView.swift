@@ -237,8 +237,8 @@ struct MessageBubble: View {
     }
 
     private var bubble: some View {
-        HStack {
-            if isMine { Spacer(minLength: 60) }
+        HStack(alignment: .bottom, spacing: 0) {
+            if isMine { Spacer(minLength: 48) }
 
             VStack(alignment: isMine ? .trailing : .leading, spacing: 3) {
                 if !isMine {
@@ -261,6 +261,8 @@ struct MessageBubble: View {
                 }
                 Text(isFromBlockedUser ? "🚫 Message masqué (utilisateur bloqué)" : message.text)
                     .italic(isFromBlockedUser)
+                    .frame(maxWidth: 260, alignment: isMine ? .trailing : .leading)
+                    .multilineTextAlignment(isMine ? .trailing : .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
                     .background(isFromBlockedUser ? Color.gray.opacity(0.15) : (isMine ? Color.teal : Color(.secondarySystemBackground)))
@@ -271,8 +273,9 @@ struct MessageBubble: View {
                     .foregroundStyle(.secondary)
             }
 
-            if !isMine { Spacer(minLength: 60) }
+            if !isMine { Spacer(minLength: 48) }
         }
+        .padding(.horizontal, 4)
     }
 }
 

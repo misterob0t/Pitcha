@@ -151,30 +151,14 @@ struct MainTabView: View {
     @StateObject private var tabBarVisibility = TabBarVisibility()
 
     var body: some View {
-        ZStack {
-            // Les 5 onglets restent vivants en permanence (pas de switch qui
-            // détruit/recrée la vue) : le changement d'onglet devient
-            // instantané, plus de rechargement réseau (avatar, stats...) ni
-            // de replay des animations d'entrée à chaque tap.
-            BoutiqueView()
-                .opacity(router.selectedTab == 0 ? 1 : 0)
-                .allowsHitTesting(router.selectedTab == 0)
-
-            EquipesView()
-                .opacity(router.selectedTab == 1 ? 1 : 0)
-                .allowsHitTesting(router.selectedTab == 1)
-
-            MatchsView()
-                .opacity(router.selectedTab == 2 ? 1 : 0)
-                .allowsHitTesting(router.selectedTab == 2)
-
-            ProfilView()
-                .opacity(router.selectedTab == 3 ? 1 : 0)
-                .allowsHitTesting(router.selectedTab == 3)
-
-            ClassementView()
-                .opacity(router.selectedTab == 4 ? 1 : 0)
-                .allowsHitTesting(router.selectedTab == 4)
+        Group {
+            switch router.selectedTab {
+            case 0: BoutiqueView()
+            case 1: EquipesView()
+            case 2: MatchsView()
+            case 3: ProfilView()
+            default: ClassementView()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environmentObject(tabBarVisibility)
@@ -310,7 +294,8 @@ struct PitchaTabBar: View {
             tabButton(index: 4, icon: "trophy.fill")
         }
         .padding(.horizontal, 28)
-        .padding(.top, 8)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
         .background(
             UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24)
                 .fill(.white)
@@ -324,9 +309,9 @@ struct PitchaTabBar: View {
             withAnimation(.snappy) { selected = index }
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 21, weight: .medium))
+                .font(.system(size: 23, weight: .medium))
                 .foregroundStyle(selected == index ? Pitcha.teal : Color.gray.opacity(0.55))
-                .frame(width: 44, height: 40)
+                .frame(width: 48, height: 46)
         }
     }
 }

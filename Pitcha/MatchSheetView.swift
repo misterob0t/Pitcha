@@ -10,6 +10,7 @@ final class MatchSheetViewModel: ObservableObject {
     @Published var players: [String: AppUser] = [:]
     @Published var messages: [ChatMessage] = []
     @Published var votes: [String: String] = [:]   // uid -> "validate"|"contest"
+    @Published var mvpVotes: [String: String] = [:] // voterUid -> votedForUid
     @Published var errorMessage: String?
     @Published var isWorking = false
 
@@ -17,8 +18,9 @@ final class MatchSheetViewModel: ObservableObject {
     private var matchListener: ListenerRegistration?
     private var messagesListener: ListenerRegistration?
     private var votesListener: ListenerRegistration?
+    private var mvpVotesListener: ListenerRegistration?
 
-    deinit { matchListener?.remove(); messagesListener?.remove(); votesListener?.remove() }
+    deinit { matchListener?.remove(); messagesListener?.remove(); votesListener?.remove(); mvpVotesListener?.remove() }
 
     func listen(matchId: String) {
         matchListener?.remove()
@@ -37,6 +39,10 @@ final class MatchSheetViewModel: ObservableObject {
         votesListener?.remove()
         votesListener = service.listenVotes(matchId: matchId) { [weak self] votes in
             Task { @MainActor in self?.votes = votes }
+        }
+        mvpVotesListener?.remove()
+        mvpVotesListener = service.listenMvpVotes(matchId: matchId) { [weak self] votes in
+            Task { @MainActor in self?.mvpVotes = votes }
         }
     }
 
@@ -86,6 +92,16 @@ final class MatchSheetViewModel: ObservableObject {
         catch { errorMessage = error.localizedDescription }
     }
 
+    func voteMvp(matchId: String, voterUid: String, votedForUid: String) async {
+        do { try await service.voteMvp(matchId: matchId, voterUid: voterUid, votedForUid: votedForUid) }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    func myMvpVote(voterUid: String?) -> String? {
+        guard let voterUid else { return nil }
+        return mvpVotes[voterUid]
+    }
+
     // Calculs votes
     func validateCount(participants: Int) -> Int { votes.values.filter { $0 == "validate" }.count }
     func contestCount(participants: Int) -> Int  { votes.values.filter { $0 == "contest" }.count }
@@ -107,6 +123,7 @@ struct MatchSheetView: View {
     @State private var showLeaveConfirm = false
     @State private var profileUser: AppUser?
     @State private var closureError: String?
+    @State private var showInviteFriend = false
 
     private var uid: String? { session.user?.id }
     private var isOrganizer: Bool { viewModel.match?.isOrganizer(uid) ?? false }
@@ -145,6 +162,15 @@ struct MatchSheetView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Fermer") { dismiss() } }
+                if let match = viewModel.match, !match.isPrivateMatch {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showInviteFriend = true
+                        } label: {
+                            Image(systemName: "person.badge.plus")
+                        }
+                    }
+                }
             }
             .confirmationDialog("Annuler le match ?", isPresented: $showCancelConfirm, titleVisibility: .visible) {
                 Button("Annuler le match", role: .destructive) {
@@ -165,6 +191,13 @@ struct MatchSheetView: View {
                 MiniProfileSheet(user: user, matchId: viewModel.match?.id)
                     .presentationDetents([.height(320)])
                     .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $showInviteFriend) {
+                if let match = viewModel.match {
+                    InviteFriendToMatchSheet(match: match)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                }
             }
             .alert("Impossible de clôturer", isPresented: .init(
                 get: { closureError != nil },
@@ -279,6 +312,105 @@ struct MatchSheetView: View {
 
 // MARK: - Bandeau de vote (pendingValidation)
 
+// MARK: - Inviter un ami à un match public
+
+struct InviteFriendToMatchSheet: View {
+    let match: Match
+    @EnvironmentObject var session: SessionViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var friends: [AppUser] = []
+    @State private var isLoading = true
+    @State private var invitedUids: Set<String> = []
+    @State private var errorMessage: String?
+
+    private var matchTitle: String {
+        "Match \(match.type.displayName) • \(match.location)"
+    }
+
+    /// On exclut les amis déjà dans le match — inutile de les inviter.
+    private var invitableFriends: [AppUser] {
+        friends.filter { !match.participants.contains($0.id ?? "") }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if invitableFriends.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "person.2.slash")
+                            .font(.system(size: 34))
+                            .foregroundStyle(.secondary)
+                        Text(friends.isEmpty ? "Tu n'as pas encore d'amis à inviter." : "Tous tes amis sont déjà dans ce match.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(invitableFriends) { friend in
+                        HStack(spacing: 12) {
+                            AvatarImage(user: friend, size: 40)
+                            Text(friend.pseudo)
+                                .font(.subheadline.weight(.bold))
+                            Spacer()
+                            if invitedUids.contains(friend.id ?? "") {
+                                Text("Envoyée")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Button {
+                                    invite(friend)
+                                } label: {
+                                    Text("Inviter")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 6)
+                                        .background(Capsule().fill(Pitcha.gradient))
+                                }
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle("Inviter un ami")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("Fermer") { dismiss() } }
+            }
+            .task {
+                guard let uids = session.user?.friends, !uids.isEmpty else { isLoading = false; return }
+                friends = (try? await FirebaseService.shared.fetchUsers(uids: uids)) ?? []
+                isLoading = false
+            }
+            .alert("Erreur", isPresented: .init(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("OK") { errorMessage = nil }
+            } message: { Text(errorMessage ?? "") }
+        }
+    }
+
+    private func invite(_ friend: AppUser) {
+        guard let friendUid = friend.id, let matchId = match.id,
+              let myUid = session.user?.id, let myPseudo = session.user?.pseudo else { return }
+        Task {
+            do {
+                try await FirebaseService.shared.inviteFriendToMatch(
+                    matchId: matchId, matchTitle: matchTitle,
+                    friendUid: friendUid, fromUid: myUid, fromPseudo: myPseudo
+                )
+                invitedUids.insert(friendUid)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
 struct VotingBanner: View {
     let match: Match
     @ObservedObject var viewModel: MatchSheetViewModel
@@ -357,16 +489,82 @@ struct VotingBanner: View {
                 }
             } else if isFinalized {
                 Text(match.status == .played
-                     ? "✅ XP distribuée à tous les participants."
-                     : "⚠️ XP réduite distribuée (score contesté).")
+                     ? (match.isRankedMatch ? "✅ PL distribués à tous les participants." : "✅ XP distribuée à tous les participants.")
+                     : (match.isRankedMatch ? "⚠️ Match contesté." : "⚠️ XP réduite distribuée (score contesté)."))
                     .font(.footnote.bold()).foregroundStyle(.secondary)
             } else if hasVoted {
                 Text("Tu as voté : \(myVote == "validate" ? "✓ Valider" : "⚠️ Contester")")
                     .font(.footnote.bold()).foregroundStyle(.secondary)
             }
+
+            // MVP du match — badge une fois désigné, sinon vote ouvert
+            // pendant la phase de validation.
+            if let mvpUid = match.mvpUid {
+                HStack(spacing: 6) {
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(Color(hex: "F2C740"))
+                    Text("MVP du match : \(viewModel.pseudo(for: mvpUid))")
+                        .font(.subheadline.weight(.heavy))
+                        .foregroundStyle(Pitcha.navy)
+                }
+                .padding(.top, 4)
+            } else if !isFinalized, match.isParticipant(uid) {
+                MvpVoteSection(match: match, viewModel: viewModel, uid: uid)
+            }
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 20).fill(.white).shadow(color: .black.opacity(0.06), radius: 8, y: 4))
+    }
+}
+
+// MARK: - Vote MVP (pendant la phase de validation)
+
+struct MvpVoteSection: View {
+    let match: Match
+    @ObservedObject var viewModel: MatchSheetViewModel
+    let uid: String?
+
+    private var myVote: String? { viewModel.myMvpVote(voterUid: uid) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Text("Vote MVP du match")
+                .font(.caption.weight(.heavy))
+                .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(match.participants, id: \.self) { participantUid in
+                        let isMe = participantUid == uid
+                        let isSelected = myVote == participantUid
+                        Button {
+                            guard let uid, let matchId = match.id else { return }
+                            Task { await viewModel.voteMvp(matchId: matchId, voterUid: uid, votedForUid: participantUid) }
+                        } label: {
+                            VStack(spacing: 4) {
+                                Text(String(viewModel.pseudo(for: participantUid).prefix(2)).uppercased())
+                                    .font(.system(size: 13, weight: .heavy))
+                                    .foregroundStyle(isSelected ? .white : Pitcha.navy)
+                                    .frame(width: 36, height: 36)
+                                    .background(
+                                        Circle().fill(
+                                            isSelected
+                                                ? AnyShapeStyle(LinearGradient(colors: [Color(hex: "F2C740"), Color(hex: "B8860B")], startPoint: .top, endPoint: .bottom))
+                                                : AnyShapeStyle(Color.gray.opacity(0.12))
+                                        )
+                                    )
+                                Text(isMe ? "Toi" : viewModel.pseudo(for: participantUid))
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .frame(width: 44)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -379,9 +577,6 @@ struct PitchView: View {
     @EnvironmentObject var session: SessionViewModel
     @Environment(\.openProfile) var openProfile
 
-    /// Taille des bulles joueur : réduite pour les gros effectifs (11v11 et
-    /// plus) afin que tout tienne sans déborder du terrain ni écraser le
-    /// reste de l'écran (score, chat).
     private var bubbleSize: CGFloat {
         switch match.maxPlayers {
         case ..<12: return 46
@@ -398,8 +593,6 @@ struct PitchView: View {
         match.maxPlayers >= 18 ? 10 : 14
     }
 
-    /// Nombre de rangées de bulles réellement nécessaires (3 par ligne),
-    /// pour chaque équipe — sert à calculer la hauteur exacte du terrain.
     private var totalRows: Int {
         let half = match.halfSlots
         let otherHalf = match.maxPlayers - half
@@ -408,13 +601,10 @@ struct PitchView: View {
         return rowsA + rowsB
     }
 
-    /// Hauteur du terrain calculée à partir du contenu réel plutôt qu'un
-    /// palier fixe : évite que les bulles débordent et chevauchent le
-    /// bandeau de score ou le chat quand il y a beaucoup de joueurs (22).
     private var pitchHeight: CGFloat {
-        let rowHeight = bubbleSize + 16 + rowSpacing   // bulle + pseudo + espace
-        let verticalPadding: CGFloat = 52               // padding haut/bas du terrain
-        let gapBetweenTeams: CGFloat = 24                // espace mini autour du Spacer central
+        let rowHeight = bubbleSize + 16 + rowSpacing
+        let verticalPadding: CGFloat = 52
+        let gapBetweenTeams: CGFloat = 24
         let computed = CGFloat(totalRows) * rowHeight + verticalPadding + gapBetweenTeams
         return max(370, computed)
     }
