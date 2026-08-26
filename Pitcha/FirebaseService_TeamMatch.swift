@@ -51,7 +51,7 @@ extension FirebaseService {
 
     /// Message système dans le chat d'équipe (rendu centré et grisé).
     func postSystemMessage(teamId: String, text: String) async throws {
-        let message = ChatMessage(senderId: "system", senderPseudo: "Système", text: text, sentAt: Date())
+        let message = ChatMessage(senderId: "system", senderPseudo: "Système", text: text, sentAt: nil)
         _ = try teamsRef.document(teamId).collection("messages").addDocument(from: message)
     }
 }
@@ -84,7 +84,7 @@ extension FirebaseService {
             senderId: uid,
             senderPseudo: sender.pseudo,
             text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-            sentAt: Date()
+            sentAt: nil
         )
         _ = try dmsRef.document(chatId).collection("messages").addDocument(from: message)
     }

@@ -97,6 +97,27 @@ final class TeamDetailViewModel: ObservableObject {
         isWorking = false
     }
 
+    /// Ajout depuis la liste d'amis — uid déjà connu, plus besoin de
+    /// rechercher par pseudo (voir InvitePlayerSheet, reconstruite pour
+    /// montrer les amis directement plutôt qu'un champ de recherche libre).
+    func inviteFriend(uid: String, pseudo: String, team: Team) async {
+        guard let teamId = team.id else { return }
+        isWorking = true
+        inviteResult = nil
+        guard !team.memberIds.contains(uid) else {
+            inviteResult = "\(pseudo) est déjà dans l'équipe."
+            isWorking = false
+            return
+        }
+        do {
+            try await service.addTeamMember(teamId: teamId, uid: uid)
+            inviteResult = "\(pseudo) a rejoint l'équipe ✓"
+        } catch {
+            inviteResult = error.localizedDescription
+        }
+        isWorking = false
+    }
+
     func removeMember(uid: String, team: Team) async {
         guard let teamId = team.id else { return }
         do {

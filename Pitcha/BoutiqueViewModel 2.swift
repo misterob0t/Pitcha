@@ -70,7 +70,7 @@ final class BoutiqueViewModel: ObservableObject {
     // MARK: - Abonnement Premium
 
     func subscribe(plan: PremiumPlan, user: AppUser?) async {
-        guard let uid = user?.id else { return }
+        guard user?.id != nil else { return }
         guard let product = storeKit.product(for: plan.productID) else {
             errorMessage = "Produit introuvable. Vérifie ta connexion."
             return
@@ -79,13 +79,15 @@ final class BoutiqueViewModel: ObservableObject {
         errorMessage = nil
         successMessage = nil
         do {
-            guard let _ = try await storeKit.purchase(product) else {
+            guard let purchased = try await storeKit.purchase(product) else {
                 // Annulé par l'utilisateur
                 isWorking = false
                 return
             }
-            try await service.activatePremium(uid: uid, plan: plan)
-            successMessage = "Bienvenue dans Pitcha Premium ! +\(plan.bonusCoins) coins offerts 🎉"
+            // Le crédit se fait côté serveur, après vérification de la
+            // signature Apple — jamais en écrivant directement le compte ici.
+            try await service.verifyPurchaseServerSide(jws: purchased.jws)
+            successMessage = "Bienvenue dans Pitcha Premium ! 🎉"
             purchaseTrigger.toggle()
         } catch {
             errorMessage = error.localizedDescription
@@ -96,7 +98,7 @@ final class BoutiqueViewModel: ObservableObject {
     // MARK: - Achat de coins
 
     func buyCoins(_ pack: CoinPack, user: AppUser?) async {
-        guard let uid = user?.id else { return }
+        guard user?.id != nil else { return }
         guard let product = storeKit.product(for: pack.id) else {
             errorMessage = "Produit introuvable. Vérifie ta connexion."
             return
@@ -105,12 +107,15 @@ final class BoutiqueViewModel: ObservableObject {
         errorMessage = nil
         successMessage = nil
         do {
-            guard let _ = try await storeKit.purchase(product) else {
+            guard let purchased = try await storeKit.purchase(product) else {
                 isWorking = false
                 return
             }
+            // Le montant de coins est déterminé PAR LE SERVEUR à partir du
+            // vrai productId de la transaction vérifiée — jamais envoyé
+            // depuis le client, pour qu'il ne puisse pas être falsifié.
+            try await service.verifyPurchaseServerSide(jws: purchased.jws)
             let amount = PitchaProductID.coinsAmount(for: pack.id)
-            try await service.addCoins(uid: uid, amount: amount)
             successMessage = "+\(amount) coins ajoutés ! 🪙"
             purchaseTrigger.toggle()
         } catch {
@@ -122,26 +127,32 @@ final class BoutiqueViewModel: ObservableObject {
     // MARK: - Restauration des achats
 
     func restorePurchases(user: AppUser?) async {
-        guard let uid = user?.id else { return }
+        guard user?.id != nil else { return }
         isWorking = true
         errorMessage = nil
         successMessage = nil
         await storeKit.restorePurchases()
         if storeKit.isPremiumActive {
             do {
-                // Détecter quel plan est actif via les entitlements courants
-                var activeProductID: String? = nil
+                // On renvoie le JWS de l'entitlement actif au serveur — la
+                // protection anti-rejeu côté fonction fait que ça ne crédite
+                // rien en double si c'était déjà traité, c'est juste une
+                // re-confirmation sûre.
+                var activeJWS: String? = nil
                 for await result in Transaction.currentEntitlements {
                     if let t = try? pitchaCheckVerified(result),
                        (t.productID == PitchaProductID.premiumMonthly ||
                         t.productID == PitchaProductID.premiumYearly) {
-                        activeProductID = t.productID
+                        activeJWS = result.jwsRepresentation
                         break
                     }
                 }
-                let plan: PremiumPlan = activeProductID == PitchaProductID.premiumYearly ? .yearly : .monthly
-                try await service.activatePremium(uid: uid, plan: plan)
-                successMessage = "Abonnement Premium restauré ✓"
+                if let jws = activeJWS {
+                    try await service.verifyPurchaseServerSide(jws: jws)
+                    successMessage = "Abonnement Premium restauré ✓"
+                } else {
+                    successMessage = "Aucun achat à restaurer."
+                }
             } catch {
                 errorMessage = error.localizedDescription
             }

@@ -359,10 +359,10 @@ struct FriendRow: View {
             Spacer()
 
             VStack(spacing: 2) {
-                Text("\(friend.overall)")
+                Text(friend.rankedDivisionEnum?.shortCode ?? "NC")
                     .font(.headline.weight(.heavy))
-                    .foregroundStyle(Pitcha.tealDark)
-                Text("OVR")
+                    .foregroundStyle(friend.rankedDivisionEnum != nil ? Pitcha.tealDark : .secondary)
+                Text("CLASSÉ")
                     .font(.caption2.bold())
                     .foregroundStyle(.secondary)
             }
@@ -433,7 +433,7 @@ struct AddFriendSheet: View {
                         Text(result.pseudo)
                             .font(.headline.weight(.heavy))
                             .foregroundStyle(Pitcha.navy)
-                        Text("NIV. \(result.level) • OVR \(result.overall)")
+                        Text("NIV. \(result.level) • \(result.rankedDivisionEnum?.displayName ?? "Non classé")")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
