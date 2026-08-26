@@ -3,6 +3,9 @@ import Combine
 
 struct ContentView: View {
     @EnvironmentObject var session: SessionViewModel
+    // Persisté sur l'appareil : l'onboarding ne s'affiche qu'une seule fois,
+    // jamais rejoué aux connexions/déconnexions suivantes.
+    @AppStorage("pitcha.hasSeenOnboarding") private var hasSeenOnboarding = false
 
     var body: some View {
         switch session.state {
@@ -14,7 +17,13 @@ struct ContentView: View {
                     .tint(Pitcha.teal)
             }
         case .loggedOut:
-            AuthView()
+            if hasSeenOnboarding {
+                AuthView()
+            } else {
+                OnboardingView {
+                    hasSeenOnboarding = true
+                }
+            }
         case .emailNotVerified:
             EmailVerificationView()
         case .loggedIn:
@@ -282,7 +291,7 @@ struct PitchaTabBar: View {
     @Binding var selected: Int
 
     var body: some View {
-        HStack {
+        HStack(alignment: .center) {
             tabButton(index: 0, icon: "cart")
             Spacer()
             tabButton(index: 1, icon: "person.3.fill")
@@ -309,9 +318,9 @@ struct PitchaTabBar: View {
             withAnimation(.snappy) { selected = index }
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 23, weight: .medium))
+                .font(.system(size: 25, weight: .medium))
                 .foregroundStyle(selected == index ? Pitcha.teal : Color.gray.opacity(0.55))
-                .frame(width: 48, height: 46)
+                .frame(width: 48, height: 46, alignment: .center)
         }
     }
 }

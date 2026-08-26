@@ -1305,25 +1305,19 @@ struct MatchHistorySheet: View {
                     if mode == .results {
                         HStack(spacing: 8) {
                             ForEach([
-                                ("win",  "Victoires", session.user?.totalWins ?? 0),
-                                ("draw", "Nuls",      session.user?.totalDraws ?? 0),
-                                ("loss", "Défaites",  session.user?.totalLosses ?? 0)
-                            ], id: \.0) { tag, label, count in
+                                ("win",  "Victoires"),
+                                ("draw", "Nuls"),
+                                ("loss", "Défaites")
+                            ], id: \.0) { tag, label in
                                 Button { resultFilter = tag } label: {
-                                    HStack(spacing: 4) {
-                                        Text(label).font(.caption.bold())
-                                        Text("\(count)")
-                                            .font(.caption2.bold())
-                                            .padding(.horizontal, 5).padding(.vertical, 2)
-                                            .background(Capsule().fill(.white.opacity(0.3)))
-                                    }
-                                    .foregroundStyle(resultFilter == tag ? .white : Pitcha.navy)
-                                    .padding(.horizontal, 12).padding(.vertical, 8)
-                                    .background(
-                                        Capsule().fill(resultFilter == tag
-                                            ? (tag == "win" ? Color.green : tag == "draw" ? Pitcha.teal : Color.red)
-                                            : Color.gray.opacity(0.12))
-                                    )
+                                    Text(label).font(.caption.bold())
+                                        .foregroundStyle(resultFilter == tag ? .white : Pitcha.navy)
+                                        .padding(.horizontal, 12).padding(.vertical, 8)
+                                        .background(
+                                            Capsule().fill(resultFilter == tag
+                                                ? (tag == "win" ? Color.green : tag == "draw" ? Pitcha.teal : Color.red)
+                                                : Color.gray.opacity(0.12))
+                                        )
                                 }
                                 .frame(maxWidth: .infinity)
                             }
@@ -1362,7 +1356,6 @@ struct MatchHistorySheet: View {
                 }
                 .padding()
             }
-            .navigationTitle(mode.title)
             .navigationBarTitleDisplayMode(.inline)
             .task {
                 if let user = session.user {

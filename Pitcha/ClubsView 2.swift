@@ -264,6 +264,7 @@ struct ClubDetailView: View {
     @State private var showInvite = false
     @State private var inviteAsStarter = true
     @State private var showDeleteConfirm = false
+    @State private var actionErrorMessage: String?
     @Environment(\.dismiss) private var dismiss
 
     private var isCaptain: Bool { club?.captainId == session.user?.id }
@@ -340,16 +341,22 @@ struct ClubDetailView: View {
         }
         .confirmationDialog("Dissoudre ce club ?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
             Button("Dissoudre définitivement", role: .destructive) {
-                guard let club else { return }
                 Task {
-                    try? await FirebaseService.shared.deleteClub(
-                        clubId: clubId, allMemberUids: club.starterIds + club.substituteIds
-                    )
-                    dismiss()
+                    do {
+                        try await FirebaseService.shared.deleteClub(clubId: clubId)
+                        dismiss()
+                    } catch {
+                        actionErrorMessage = error.localizedDescription
+                    }
                 }
             }
         } message: {
             Text("Cette action est irréversible. Le club sera retiré de tous les joueurs concernés.")
+        }
+        .alert("Erreur", isPresented: .init(get: { actionErrorMessage != nil }, set: { if !$0 { actionErrorMessage = nil } })) {
+            Button("OK") { actionErrorMessage = nil }
+        } message: {
+            Text(actionErrorMessage ?? "")
         }
         .task {
             _ = FirebaseService.shared.listenClub(clubId: clubId) { updated in
@@ -421,15 +428,34 @@ struct ClubDetailView: View {
     }
 
     private func removeMember(uid: String) {
-        Task { try? await FirebaseService.shared.removeFromClubRoster(clubId: clubId, uid: uid) }
+        Task {
+            do {
+                try await FirebaseService.shared.removeFromClubRoster(clubId: clubId, uid: uid)
+            } catch {
+                actionErrorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func moveMember(uid: String, isStarterList: Bool) {
-        Task { try? await FirebaseService.shared.moveClubRosterSlot(clubId: clubId, uid: uid, toStarter: !isStarterList) }
+        Task {
+            do {
+                try await FirebaseService.shared.moveClubRosterSlot(clubId: clubId, uid: uid, toStarter: !isStarterList)
+            } catch {
+                actionErrorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func leaveClubAsMember() {
-        Task { try? await FirebaseService.shared.leaveClub(clubId: clubId) }
+        Task {
+            do {
+                try await FirebaseService.shared.leaveClub(clubId: clubId)
+                dismiss()
+            } catch {
+                actionErrorMessage = error.localizedDescription
+            }
+        }
     }
 }
 

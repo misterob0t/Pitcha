@@ -9,6 +9,7 @@ struct FriendChatView: View {
 
     @State private var messages: [ChatMessage] = []
     @State private var messageText = ""
+    @FocusState private var isMessageFieldFocused: Bool
     @State private var listener: ListenerRegistration?
     @State private var showFriendProfile = false
     @State private var isPinned: Bool = false
@@ -48,9 +49,11 @@ struct FriendChatView: View {
                 }
             }
 
-            // Saisie
+            // Saisie — le clavier reste ouvert après l'envoi ; glisser cette
+            // barre vers le bas le referme (au lieu du bouton envoyer).
             HStack(spacing: 10) {
                 TextField("Message...", text: $messageText)
+                    .focused($isMessageFieldFocused)
                     .submitLabel(.send)
                     .onSubmit { sendCurrentMessage() }
                     .disabled(!network.isConnected)
@@ -64,6 +67,14 @@ struct FriendChatView: View {
                 .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !network.isConnected)
             }
             .padding(.horizontal).padding(.vertical, 8)
+            .gesture(
+                DragGesture(minimumDistance: 15)
+                    .onEnded { value in
+                        if value.translation.height > 15 {
+                            isMessageFieldFocused = false
+                        }
+                    }
+            )
         }
         // Titre = bouton vers le profil de l'ami
         .navigationBarTitleDisplayMode(.inline)
@@ -116,6 +127,9 @@ struct FriendChatView: View {
         guard !text.isEmpty, let chatId, let sender = session.user else { return }
         messageText = ""
         Task { try? await FirebaseService.shared.sendDMMessage(chatId: chatId, sender: sender, text: text) }
+        // Le clavier doit rester ouvert après l'envoi — seul un glissement
+        // de la barre de saisie vers le bas doit le fermer.
+        isMessageFieldFocused = true
     }
 
     private func loadPreferences() {
@@ -181,15 +195,18 @@ struct FriendProfileSheet: View {
                     }
                 }
 
-                // Stats rapides
-                HStack(spacing: 20) {
-                    ForEach(friend.displayAttributes.all, id: \.key) { attr in
-                        VStack(spacing: 2) {
-                            Text(attr.key)
-                                .font(.system(size: 10, weight: .heavy)).foregroundStyle(.secondary)
-                            Text("\(attr.value)")
-                                .font(.system(size: 16, weight: .black)).foregroundStyle(Pitcha.navy)
-                        }
+                // Statut Classé
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                        .font(.caption)
+                        .foregroundStyle(friend.rankedDivisionEnum != nil ? Color(hex: "B8860B") : .secondary)
+                    Text(friend.rankedDivisionEnum?.displayName ?? "Non classé")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Pitcha.navy)
+                    if friend.rankedDivisionEnum != nil {
+                        Text("· \(friend.rankedPLValue) PL")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -272,3 +289,5 @@ struct FriendActionRow: View {
         }
     }
 }
+
+

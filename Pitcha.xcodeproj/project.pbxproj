@@ -12,6 +12,7 @@
 		C5838D062FD8D88A00751052 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = C5838D052FD8D88A00751052 /* FirebaseDatabase */; };
 		C5838D082FD8D88A00751052 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = C5838D072FD8D88A00751052 /* FirebaseFirestore */; };
 		C5838D0E2FD8D88A00751052 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = C5838D0D2FD8D88A00751052 /* FirebaseStorage */; };
+		C583C7DB30393F0300BC7887 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = C583C7DA30393F0300BC7887 /* FirebaseFunctions */; };
 		C5B1DBA02FDE6A9B0046FB10 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = C5B1DB9F2FDE6A9B0046FB10 /* FirebaseMessaging */; };
 /* End PBXBuildFile section */
 
@@ -75,6 +76,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C5B1DBA02FDE6A9B0046FB10 /* FirebaseMessaging in Frameworks */,
+				C583C7DB30393F0300BC7887 /* FirebaseFunctions in Frameworks */,
 				C5838D062FD8D88A00751052 /* FirebaseDatabase in Frameworks */,
 				C5838D0E2FD8D88A00751052 /* FirebaseStorage in Frameworks */,
 				C5838D022FD8D88A00751052 /* FirebaseAuth in Frameworks */,
@@ -154,6 +156,7 @@
 				C5838D072FD8D88A00751052 /* FirebaseFirestore */,
 				C5838D0D2FD8D88A00751052 /* FirebaseStorage */,
 				C5B1DB9F2FDE6A9B0046FB10 /* FirebaseMessaging */,
+				C583C7DA30393F0300BC7887 /* FirebaseFunctions */,
 			);
 			productName = Pitcha;
 			productReference = C5838CC42FD8D69F00751052 /* Pitcha.app */;
@@ -685,6 +688,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C5838CFC2FD8D88A00751052 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseStorage;
+		};
+		C583C7DA30393F0300BC7887 /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C5838CFC2FD8D88A00751052 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
 		};
 		C5B1DB9F2FDE6A9B0046FB10 /* FirebaseMessaging */ = {
 			isa = XCSwiftPackageProductDependency;
