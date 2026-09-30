@@ -91,6 +91,7 @@ struct RankedClubsSection: View {
 struct ClubRow: View {
     let club: Club
     let isCaptain: Bool
+    @EnvironmentObject var session: SessionViewModel
 
     var body: some View {
         HStack(spacing: 14) {
@@ -126,6 +127,14 @@ struct ClubRow: View {
                 }
             }
             Spacer()
+            let unread = club.unreadCount(for: session.user?.id)
+            if unread > 0 {
+                Text("\(min(unread, 99))")
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 20, minHeight: 20)
+                    .background(Circle().fill(Color.red))
+            }
             Image(systemName: "chevron.right")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -259,19 +268,199 @@ struct ClubCreateSheet: View {
 struct ClubDetailView: View {
     let clubId: String
     @EnvironmentObject var session: SessionViewModel
-    @State private var club: Club?
-    @State private var listener: Any?
-    @State private var showInvite = false
-    @State private var inviteAsStarter = true
-    @State private var showDeleteConfirm = false
-    @State private var actionErrorMessage: String?
+    @EnvironmentObject var network: NetworkMonitor
+    @EnvironmentObject var tabBarVisibility: TabBarVisibility
     @Environment(\.dismiss) private var dismiss
+
+    @State private var club: Club?
+    @State private var messages: [ChatMessage] = []
+    @State private var messageText = ""
+    @FocusState private var isMessageFieldFocused: Bool
+    @State private var showClubInfo = false
+    @State private var showRanking = false
+    @State private var showHighlightInfo = false
+    @State private var actionErrorMessage: String?
 
     private var isCaptain: Bool { club?.captainId == session.user?.id }
 
+    private func sendCurrentMessage() {
+        let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        messageText = ""
+        Task { try? await FirebaseService.shared.sendClubMessage(clubId: clubId, sender: session.user, text: text) }
+        isMessageFieldFocused = true
+    }
+
+    // Barre d'actions : uniquement Classement et Highlight — organiser un
+    // match Classé se fait depuis le "+" de l'onglet Matchs (choix du club),
+    // pas depuis ici.
+    private var actionsBar: some View {
+        HStack(spacing: 12) {
+            Spacer()
+            TeamActionChip(icon: "video.fill", label: "Highlight") {
+                showHighlightInfo = true
+            }
+            TeamActionChip(icon: "list.number", label: "Classement") {
+                showRanking = true
+            }
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+    }
+
+    private var inputBar: some View {
+        HStack(spacing: 10) {
+            TextField("Message...", text: $messageText)
+                .focused($isMessageFieldFocused)
+                .disabled(!network.isConnected)
+                .submitLabel(.send)
+                .onSubmit { sendCurrentMessage() }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+
+            if messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                PhotoPickerButton { data in
+                    guard let sender = session.user else { return }
+                    Task { try? await FirebaseService.shared.sendPhotoClubMessage(clubId: clubId, sender: sender, photoData: data) }
+                }
+                .disabled(!network.isConnected)
+                VoiceRecordButton { fileURL, duration in
+                    guard let sender = session.user else { return }
+                    Task { try? await FirebaseService.shared.sendVoiceClubMessage(clubId: clubId, sender: sender, fileURL: fileURL, duration: duration) }
+                }
+                .disabled(!network.isConnected)
+            } else {
+                Button { sendCurrentMessage() } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(!network.isConnected ? .gray : Pitcha.teal)
+                }
+                .disabled(!network.isConnected)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .gesture(
+            DragGesture(minimumDistance: 15)
+                .onEnded { value in
+                    if value.translation.height > 15 { isMessageFieldFocused = false }
+                }
+        )
+    }
+
     var body: some View {
-        ScrollView {
+        VStack(spacing: 0) {
+            if !network.isConnected { OfflineChatBanner() }
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(messages) { message in
+                            MessageBubble(
+                                message: message,
+                                isMine: message.senderId == session.user?.id,
+                                context: "club",
+                                contextId: clubId
+                            )
+                            .id(message.id)
+                        }
+                    }
+                    .padding()
+                }
+                .onChange(of: messages.count) {
+                    if let lastId = messages.last?.id {
+                        withAnimation(.snappy) { proxy.scrollTo(lastId, anchor: .bottom) }
+                    }
+                }
+            }
+
+            actionsBar
+            inputBar
+        }
+        .background(PitchaBackground())
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Button {
+                    showClubInfo = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(club?.name ?? "Club").font(.headline.weight(.heavy))
+                        Image(systemName: "chevron.down").font(.caption2.bold())
+                    }
+                    .foregroundStyle(Pitcha.navy)
+                }
+            }
+        }
+        .sheet(isPresented: $showClubInfo) {
             if let club {
+                ClubInfoSheet(club: club, clubId: clubId, isCaptain: isCaptain, onDissolved: { dismiss() })
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
+        .sheet(isPresented: $showRanking) {
+            ClubRankingSheet(club: club)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .alert("Bientôt disponible 📹", isPresented: $showHighlightInfo) {
+            Button("OK") {}
+        } message: {
+            Text("Les highlights arrivent dans une prochaine version : tu pourras partager tes plus belles actions avec ton club.")
+        }
+        .alert("Erreur", isPresented: .init(get: { actionErrorMessage != nil }, set: { if !$0 { actionErrorMessage = nil } })) {
+            Button("OK") { actionErrorMessage = nil }
+        } message: {
+            Text(actionErrorMessage ?? "")
+        }
+        .task {
+            _ = FirebaseService.shared.listenClub(clubId: clubId) { updated in
+                Task { @MainActor in club = updated }
+            }
+            _ = FirebaseService.shared.listenClubMessages(clubId: clubId) { updated in
+                Task { @MainActor in messages = updated }
+            }
+        }
+        .onAppear {
+            tabBarVisibility.isHidden = true
+            if let uid = session.user?.id {
+                Task {
+                    await FirebaseService.shared.markClubMessagesRead(clubId: clubId, uid: uid)
+                    await session.refreshUnreadCount(uid: uid)
+                }
+            }
+        }
+        .onDisappear {
+            tabBarVisibility.isHidden = false
+        }
+    }
+}
+
+// MARK: - Infos du club (roster, gestion) — ouverte en tapant le nom du club
+
+struct ClubInfoSheet: View {
+    let club: Club
+    let clubId: String
+    let isCaptain: Bool
+    let onDissolved: () -> Void
+
+    @EnvironmentObject var session: SessionViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var showInvite = false
+    @State private var inviteAsStarter = true
+    @State private var showDeleteConfirm = false
+    @State private var showRenameAlert = false
+    @State private var newName = ""
+    @State private var actionErrorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
                 VStack(spacing: 20) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 26)
@@ -300,6 +489,16 @@ struct ClubDetailView: View {
                     rosterSection(title: substituteTitle(club: club), uids: club.substituteIds, isStarterList: false, club: club)
 
                     if isCaptain {
+                        Button {
+                            newName = club.name
+                            showRenameAlert = true
+                        } label: {
+                            Text("Renommer le club")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(Pitcha.tealDark)
+                        }
+                        .padding(.top, 8)
+
                         Button(role: .destructive) {
                             showDeleteConfirm = true
                         } label: {
@@ -307,60 +506,67 @@ struct ClubDetailView: View {
                                 .font(.subheadline.weight(.bold))
                                 .foregroundStyle(.red)
                         }
-                        .padding(.top, 8)
                     }
                 }
                 .padding(.bottom, 40)
-            } else {
-                ProgressView().padding(.top, 80)
-            }
-        }
-        .background(PitchaBackground())
-        .navigationTitle(club?.name ?? "Club")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if isCaptain {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button { inviteAsStarter = true; showInvite = true } label: {
-                            Label("Ajouter un titulaire", systemImage: "person.fill.badge.plus")
+                .alert("Renommer le club", isPresented: $showRenameAlert) {
+                    TextField("Nom du club", text: $newName)
+                    Button("Annuler", role: .cancel) {}
+                    Button("Renommer") {
+                        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        Task {
+                            do {
+                                try await FirebaseService.shared.renameClub(clubId: clubId, newName: trimmed)
+                            } catch {
+                                actionErrorMessage = error.localizedDescription
+                            }
                         }
-                        Button { inviteAsStarter = false; showInvite = true } label: {
-                            Label("Ajouter un remplaçant", systemImage: "person.badge.plus")
-                        }
-                    } label: {
-                        Image(systemName: "plus")
                     }
                 }
             }
-        }
-        .sheet(isPresented: $showInvite) {
-            if let club {
-                ClubInvitePlayerSheet(clubId: club.id ?? "", asStarter: inviteAsStarter)
-            }
-        }
-        .confirmationDialog("Dissoudre ce club ?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
-            Button("Dissoudre définitivement", role: .destructive) {
-                Task {
-                    do {
-                        try await FirebaseService.shared.deleteClub(clubId: clubId)
-                        dismiss()
-                    } catch {
-                        actionErrorMessage = error.localizedDescription
+            .background(Pitcha.background)
+            .navigationTitle(club.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("Fermer") { dismiss() } }
+                if isCaptain {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button { inviteAsStarter = true; showInvite = true } label: {
+                                Label("Ajouter un titulaire", systemImage: "person.fill.badge.plus")
+                            }
+                            Button { inviteAsStarter = false; showInvite = true } label: {
+                                Label("Ajouter un remplaçant", systemImage: "person.badge.plus")
+                            }
+                        } label: {
+                            Image(systemName: "plus")
+                        }
                     }
                 }
             }
-        } message: {
-            Text("Cette action est irréversible. Le club sera retiré de tous les joueurs concernés.")
-        }
-        .alert("Erreur", isPresented: .init(get: { actionErrorMessage != nil }, set: { if !$0 { actionErrorMessage = nil } })) {
-            Button("OK") { actionErrorMessage = nil }
-        } message: {
-            Text(actionErrorMessage ?? "")
-        }
-        .task {
-            _ = FirebaseService.shared.listenClub(clubId: clubId) { updated in
-                Task { @MainActor in club = updated }
+            .sheet(isPresented: $showInvite) {
+                ClubInvitePlayerSheet(clubId: clubId, asStarter: inviteAsStarter)
+            }
+            .confirmationDialog("Dissoudre ce club ?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                Button("Dissoudre définitivement", role: .destructive) {
+                    Task {
+                        do {
+                            try await FirebaseService.shared.deleteClub(clubId: clubId)
+                            dismiss()
+                            onDissolved()
+                        } catch {
+                            actionErrorMessage = error.localizedDescription
+                        }
+                    }
+                }
+            } message: {
+                Text("Cette action est irréversible. Le club sera retiré de tous les joueurs concernés.")
+            }
+            .alert("Erreur", isPresented: .init(get: { actionErrorMessage != nil }, set: { if !$0 { actionErrorMessage = nil } })) {
+                Button("OK") { actionErrorMessage = nil }
+            } message: {
+                Text(actionErrorMessage ?? "")
             }
         }
     }
@@ -405,9 +611,6 @@ struct ClubDetailView: View {
         }
     }
 
-    // Extraite de rosterSection : le compilateur Swift n'arrivait plus à
-    // type-checker l'expression quand tout était inline dans le ForEach
-    // (trop de fermetures/comparaisons imbriquées d'un coup).
     @ViewBuilder
     private func memberRow(uid: String, isStarterList: Bool, club: Club) -> some View {
         let isCaptainRow: Bool = (uid == club.captainId)
@@ -452,6 +655,7 @@ struct ClubDetailView: View {
             do {
                 try await FirebaseService.shared.leaveClub(clubId: clubId)
                 dismiss()
+                onDissolved()
             } catch {
                 actionErrorMessage = error.localizedDescription
             }
@@ -459,7 +663,66 @@ struct ClubDetailView: View {
     }
 }
 
+// MARK: - Classement du club (par PL/division, pas goals/xp)
+
+struct ClubRankingSheet: View {
+    let club: Club?
+    @State private var members: [AppUser] = []
+    @State private var isLoading = true
+
+    private var ranked: [AppUser] {
+        members.sorted {
+            ($0.rankedPLValue + ($0.rankedDivisionEnum?.order ?? -1) * 100) >
+            ($1.rankedPLValue + ($1.rankedDivisionEnum?.order ?? -1) * 100)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            if ranked.count >= 3 {
+                                HStack(alignment: .bottom, spacing: 10) {
+                                    PodiumMember(user: ranked[1], rank: 2, height: 80)
+                                    PodiumMember(user: ranked[0], rank: 1, height: 110)
+                                    PodiumMember(user: ranked[2], rank: 3, height: 60)
+                                }
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+                            }
+                            LazyVStack(spacing: 10) {
+                                ForEach(Array(ranked.enumerated()), id: \.element.id) { index, player in
+                                    TeamRankRow(player: player, rank: index + 1)
+                                }
+                            }
+                            .padding(.horizontal)
+                            .padding(.bottom, 20)
+                        }
+                    }
+                }
+            }
+            .background(Pitcha.background)
+            .navigationTitle("Classement · \(club?.name ?? "")")
+            .navigationBarTitleDisplayMode(.inline)
+            .task {
+                guard let club else { isLoading = false; return }
+                let uids = club.starterIds + club.substituteIds
+                members = (try? await FirebaseService.shared.fetchUsers(uids: uids)) ?? []
+                isLoading = false
+            }
+        }
+    }
+}
+
 // MARK: - Ligne membre du roster (résout le pseudo/avatar depuis l'uid)
+//
+// L'avatar + le pseudo sont maintenant tappables : ça ouvre le même
+// PublicProfileSheet (lecture seule, avec bouton "Ajouter en ami") que
+// dans les équipes — sans les sous-stats ni l'OVR, plus utilisés.
 
 struct ClubMemberRow: View {
     let uid: String
@@ -473,12 +736,20 @@ struct ClubMemberRow: View {
 
     @State private var user: AppUser?
     @State private var showLeaveConfirm = false
+    @State private var showProfile = false
 
     var body: some View {
         HStack(spacing: 12) {
             if let user {
-                AvatarImage(user: user, size: 38)
-                Text(user.pseudo).font(.subheadline.weight(.bold))
+                Button {
+                    showProfile = true
+                } label: {
+                    HStack(spacing: 12) {
+                        AvatarImage(user: user, size: 38)
+                        Text(user.pseudo).font(.subheadline.weight(.bold))
+                    }
+                }
+                .buttonStyle(.plain)
             } else {
                 Circle().fill(Color.gray.opacity(0.15)).frame(width: 38, height: 38)
                 Text("...").font(.subheadline).foregroundStyle(.secondary)
@@ -522,6 +793,11 @@ struct ClubMemberRow: View {
         .task {
             let uids = [uid]
             user = (try? await FirebaseService.shared.fetchUsers(uids: uids))?.first
+        }
+        .sheet(isPresented: $showProfile) {
+            if let user {
+                PublicProfileSheet(member: user)
+            }
         }
     }
 }

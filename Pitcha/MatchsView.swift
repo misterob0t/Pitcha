@@ -3,6 +3,9 @@ import SwiftUI
 struct MatchsView: View {
     @EnvironmentObject var session: SessionViewModel
     @EnvironmentObject var router: TabRouter
+    @EnvironmentObject var network: NetworkMonitor
+    @StateObject private var viewModel = MatchsViewModel()
+    @State private var showCreateSheet = false
 
     private var visibleMatches: [Match] {
         let dismissed = session.user?.dismissedMatches ?? []
@@ -11,124 +14,129 @@ struct MatchsView: View {
             return !dismissed.contains(id)
         }
     }
-    @EnvironmentObject var network: NetworkMonitor
-    @StateObject private var viewModel = MatchsViewModel()
-    @State private var showCreateSheet = false
 
     var body: some View {
         VStack(spacing: 16) {
-                // Header : Publics/Privés/Tournois + filtre ville (icône seule)
-                HStack {
-                    HStack(spacing: 8) {
-                        ForEach(MatchVisibility.allCases, id: \.self) { visibility in
-                            PillButton(
-                                label: visibility.rawValue,
-                                isSelected: viewModel.visibility == visibility,
-                                selectedFill: visibility == .tournois
-                                    ? AnyShapeStyle(
-                                        LinearGradient(
-                                            colors: [Pitcha.gold, Color(hex: "B8860B")],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                      )
-                                    : AnyShapeStyle(Pitcha.gradient),
-                                shimmer: visibility == .tournois
-                            ) {
-                                withAnimation(.snappy) { viewModel.visibility = visibility }
-                            }
-                        }
-                    }
+            headerRow
+            daysStrip
 
-                    Spacer()
-
-                    // Icône filtre seule (plus de nom de ville affiché en clair,
-                    // pour gagner de la place avec l'onglet Tournois ajouté)
-                    Menu {
-                        ForEach(MatchsViewModel.cities, id: \.self) { city in
-                            Button {
-                                withAnimation(.snappy) { viewModel.city = city }
-                            } label: {
-                                if city == viewModel.city {
-                                    Label(city, systemImage: "checkmark")
-                                } else {
-                                    Text(city)
-                                }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                            .font(.system(size: 22))
-                            .foregroundStyle(Pitcha.navy)
-                            .frame(width: 40, height: 40)
-                            .background(Circle().fill(Color.black.opacity(0.06)))
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.top, 16)
-
-                // Strip de jours horizontal
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(viewModel.upcomingDays, id: \.self) { day in
-                            DayChip(date: day, isSelected: viewModel.isSelected(day)) {
-                                viewModel.selectedDate = day
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-
-                if let error = viewModel.errorMessage {
-                    Text(error)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .padding(.horizontal)
-                }
-
-                // Liste ou état vide
-                if viewModel.visibility == .tournois {
-                    Spacer()
-                    TournoisComingSoonView()
-                    Spacer()
-                    Spacer()
-                } else if visibleMatches.isEmpty {
-                    Spacer()
-                    EmptyMatchesView()
-                    Spacer()
-                    Spacer()
-                } else {
-                    VStack(spacing: 12) {
-                        ForEach(visibleMatches) { match in
-                            MatchCard(match: match, viewModel: viewModel)
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 90)
-                }
+            MyUpcomingMatchesBanner(matches: viewModel.myUpcomingMatches) { match in
+                viewModel.selectedDate = Calendar.current.startOfDay(for: match.date)
             }
 
+            if let error = viewModel.errorMessage {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal)
+            }
+
+            contentBody
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(PitchaBackground())
-        .overlay(alignment: .bottom) {
-            // Coins + FAB en overlay sur la zone safe : au-dessus de la tab bar
-            HStack {
-                Button {
-                    router.goToCoins()
-                } label: {
-                    CoinsPill(coins: session.user?.coins ?? 0)
-                }
-                Spacer()
-                PitchaFAB { showCreateSheet = true }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 40)
-        }
+        .overlay(alignment: .bottom) { bottomOverlay }
         .sheet(isPresented: $showCreateSheet) {
             CreateMatchView(viewModel: viewModel)
         }
-        .onAppear { viewModel.startAutoRefresh() }
+        .onAppear {
+            viewModel.startAutoRefresh(uid: session.user?.id)
+            viewModel.applyDefaultLocation(from: session.user)
+        }
         .onDisappear { viewModel.stopAutoRefresh() }
+    }
+
+    // MARK: - Header : Publics/Privés/Tournois + filtre de zone
+
+    private var headerRow: some View {
+        HStack {
+            visibilityPills
+            Spacer()
+            LocationFilterButton(viewModel: viewModel)
+        }
+        .padding(.horizontal)
+        .padding(.top, 16)
+    }
+
+    private var visibilityPills: some View {
+        HStack(spacing: 8) {
+            ForEach(MatchVisibility.allCases, id: \.self) { visibility in
+                let fill: AnyShapeStyle = visibility == .tournois
+                    ? AnyShapeStyle(
+                        LinearGradient(
+                            colors: [Pitcha.gold, Color(hex: "B8860B")],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                      )
+                    : AnyShapeStyle(Pitcha.gradient)
+
+                PillButton(
+                    label: visibility.rawValue,
+                    isSelected: viewModel.visibility == visibility,
+                    selectedFill: fill,
+                    shimmer: visibility == .tournois
+                ) {
+                    withAnimation(.snappy) { viewModel.visibility = visibility }
+                }
+            }
+        }
+    }
+
+    private var daysStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(viewModel.upcomingDays, id: \.self) { day in
+                    DayChip(date: day, isSelected: viewModel.isSelected(day)) {
+                        viewModel.selectedDate = day
+                    }
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    // MARK: - Contenu : liste, état vide, ou placeholder Tournois
+
+    @ViewBuilder
+    private var contentBody: some View {
+        if viewModel.visibility == .tournois {
+            Spacer()
+            TournoisComingSoonView()
+            Spacer()
+            Spacer()
+        } else if visibleMatches.isEmpty {
+            Spacer()
+            EmptyMatchesView()
+            Spacer()
+            Spacer()
+        } else {
+            matchesList
+        }
+    }
+
+    private var matchesList: some View {
+        VStack(spacing: 12) {
+            ForEach(visibleMatches) { match in
+                MatchCard(match: match, viewModel: viewModel)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 90)
+    }
+
+    private var bottomOverlay: some View {
+        HStack {
+            Button {
+                router.goToCoins()
+            } label: {
+                CoinsPill(coins: session.user?.coins ?? 0)
+            }
+            Spacer()
+            PitchaFAB { showCreateSheet = true }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 40)
     }
 }
 
@@ -257,6 +265,7 @@ struct MatchCard: View {
     @State private var showJoinConfirm = false
     @State private var showClubJoinPicker = false
     @State private var showSheet = false
+    @State private var organizerProfile: AppUser?
 
     private var uid: String? { session.user?.id }
     private var isOrganizer: Bool { match.isOrganizer(uid) }
@@ -319,89 +328,8 @@ struct MatchCard: View {
                 .frame(width: 4)
                 .padding(.vertical, 16)
 
-            HStack(alignment: .top, spacing: 14) {
-                // Carré de l'heure
-                RoundedRectangle(cornerRadius: 22)
-                    .fill(
-                        LinearGradient(colors: squareColors, startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .frame(width: 84, height: 84)
-                    .overlay(
-                        Text(timeText)
-                            .font(.system(size: 19, weight: .heavy, design: .rounded))
-                            .foregroundStyle(.white)
-                    )
-                    .shadow(color: squareColors[1].opacity(0.35), radius: 8, y: 4)
-
-                // Infos
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 6) {
-                        // Pastille de type (5v5 / 11v11) — remplace le "Match FIVE" littéral
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(squareColors[1])
-                                .frame(width: 6, height: 6)
-                            Text(match.type == .five ? "5v5" : "11v11")
-                                .font(.system(size: 11, weight: .heavy))
-                                .foregroundStyle(Pitcha.navy)
-                        }
-
-                        statusPill
-
-                        if match.isRankedMatch {
-                            HStack(spacing: 3) {
-                                Image(systemName: "chart.line.uptrend.xyaxis")
-                                    .font(.system(size: 8, weight: .bold))
-                                Text("CLASSÉ")
-                                    .font(.system(size: 9, weight: .heavy))
-                                    .kerning(0.3)
-                            }
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(
-                                Capsule().fill(
-                                    LinearGradient(colors: [Color(hex: "F2C740"), Color(hex: "B8860B")],
-                                                   startPoint: .leading, endPoint: .trailing)
-                                )
-                            )
-                        }
-
-                        Spacer()
-
-                        // Organisateur : avatar-initiale, discret, sans "Par ..."
-                        organizerAvatar
-                    }
-
-                    // Localisation : bien visible, en gras, couleur d'accent —
-                    // c'est l'info la plus utile de la carte, elle doit sauter aux yeux
-                    HStack(spacing: 6) {
-                        Image(systemName: "mappin.circle.fill")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(squareColors[1])
-                        Text(locationLine)
-                            .font(.system(size: 16, weight: .heavy))
-                            .foregroundStyle(Pitcha.navy)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-
-                    // Score final visible si le match est clôturé
-                    if (match.status == .played || match.status == .contested),
-                       let a = match.scoreA, let b = match.scoreB {
-                        Text("\(a) – \(b)")
-                            .font(.system(size: 13, weight: .heavy, design: .rounded))
-                            .foregroundStyle(match.status == .played ? .green : .orange)
-                    }
-
-                    // Barre de progression joueurs — remplace "X/Y joueurs" en texte brut
-                    playersProgress
-
-                    actionButton
-                        .padding(.top, 2)
-                }
-            }
-            .padding(14)
+            cardMainContent
+                .padding(14)
         }
         .background(
             RoundedRectangle(cornerRadius: 26)
@@ -414,19 +342,129 @@ struct MatchCard: View {
             isPresented: $showJoinConfirm,
             titleVisibility: .visible
         ) {
-            Button("Rejoindre • 1 coin") {
+            Button(session.user?.hasPremium == true ? "Rejoindre" : "Rejoindre • 1 coin") {
                 Task { await viewModel.join(match, uid: session.user?.id) }
             }
         } message: {
-            Text("1 coin sera déduit, non remboursé si tu quittes.")
+            Text(session.user?.hasPremium == true
+                 ? "Inclus dans ton abonnement Premium."
+                 : "1 coin sera déduit, non remboursé si tu quittes.")
         }
-        .sheet(isPresented: $showSheet) {
+        .sheet(isPresented: $showSheet, onDismiss: {
+            // Rejoindre/quitter/annuler DEPUIS la feuille elle-même
+            // n'avertissait jamais cette liste — elle restait figée
+            // jusqu'au prochain cycle des 20s (ou un changement d'onglet
+            // qui relance startAutoRefresh). Ici, peu importe ce qui s'est
+            // passé dans la feuille, la liste se remet à jour dès qu'on
+            // revient dessus.
+            Task { await viewModel.refreshNow() }
+        }) {
             if let matchId = match.id {
                 MatchSheetView(matchId: matchId)
             }
         }
         .sheet(isPresented: $showClubJoinPicker) {
-            ClubJoinPickerSheet(match: match)
+            ClubJoinPickerSheet(match: match, onJoined: {
+                Task { await viewModel.refreshNow() }
+            })
+        }
+    }
+
+    private var cardMainContent: some View {
+        HStack(alignment: .top, spacing: 14) {
+            // Carré de l'heure — tapable pour un aperçu, même effet
+            // que le bouton terrain à côté du bouton Rejoindre.
+            RoundedRectangle(cornerRadius: 22)
+                .fill(
+                    LinearGradient(colors: squareColors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+                .frame(width: 84, height: 84)
+                .overlay(
+                    Text(timeText)
+                        .font(.system(size: 19, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white)
+                )
+                .shadow(color: squareColors[1].opacity(0.35), radius: 8, y: 4)
+                .onTapGesture { showSheet = true }
+
+            // Infos
+            VStack(alignment: .leading, spacing: 10) {
+                cardTitleRow
+                cardLocationRow
+
+                // Score final visible si le match est clôturé
+                if (match.status == .played || match.status == .contested),
+                   let a = match.scoreA, let b = match.scoreB {
+                    Text("\(a) – \(b)")
+                        .font(.system(size: 13, weight: .heavy, design: .rounded))
+                        .foregroundStyle(match.status == .played ? .green : .orange)
+                }
+
+                // Barre de progression joueurs — remplace "X/Y joueurs" en texte brut
+                playersProgress
+
+                actionButton
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private var cardTitleRow: some View {
+        HStack(spacing: 6) {
+            // Pastille de type (5v5 / 11v11) — remplace le "Match FIVE" littéral
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(squareColors[1])
+                    .frame(width: 6, height: 6)
+                Text(match.type == .five ? "5v5" : "11v11")
+                    .font(.system(size: 11, weight: .heavy))
+                    .foregroundStyle(Pitcha.navy)
+            }
+
+            statusPill
+
+            if match.isRankedMatch {
+                rankedBadge
+            }
+
+            Spacer()
+
+            // Organisateur : avatar-initiale, discret, sans "Par ..."
+            organizerAvatar
+        }
+    }
+
+    private var rankedBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .font(.system(size: 8, weight: .bold))
+            Text("CLASSÉ")
+                .font(.system(size: 9, weight: .heavy))
+                .kerning(0.3)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule().fill(
+                LinearGradient(colors: [Color(hex: "F2C740"), Color(hex: "B8860B")],
+                               startPoint: .leading, endPoint: .trailing)
+            )
+        )
+    }
+
+    // Localisation : bien visible, en gras, couleur d'accent —
+    // c'est l'info la plus utile de la carte, elle doit sauter aux yeux
+    private var cardLocationRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "mappin.circle.fill")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(squareColors[1])
+            Text(locationLine)
+                .font(.system(size: 16, weight: .heavy))
+                .foregroundStyle(Pitcha.navy)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
     }
 
@@ -442,15 +480,30 @@ struct MatchCard: View {
     }
 
     /// Avatar circulaire avec l'initiale de l'organisateur — remplace "Par {pseudo}".
+    /// Tapable : ouvre le profil de l'organisateur (demande d'ami possible
+    /// depuis là, comme partout ailleurs où un profil s'affiche).
     private var organizerAvatar: some View {
         let initial = match.organizerPseudo.trimmingCharacters(in: .whitespaces).first.map(String.init)?.uppercased() ?? "?"
-        return ZStack {
-            Circle()
-                .fill(Pitcha.navy.opacity(0.10))
-                .frame(width: 22, height: 22)
-            Text(initial)
-                .font(.system(size: 10, weight: .heavy))
-                .foregroundStyle(Pitcha.navy)
+        return Button {
+            Task {
+                if let user = try? await FirebaseService.shared.fetchUsers(uids: [match.organizerId]).first {
+                    organizerProfile = user
+                }
+            }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(Pitcha.navy.opacity(0.10))
+                    .frame(width: 22, height: 22)
+                Text(initial)
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(Pitcha.navy)
+            }
+        }
+        .sheet(item: $organizerProfile) { user in
+            MiniProfileSheet(user: user, match: match, context: "match", contextId: match.id)
+                .presentationDetents([.height(420)])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -521,12 +574,31 @@ struct MatchCard: View {
                 .frame(height: 40)
                 .background(Capsule().fill(Color.gray.opacity(0.15)))
         } else {
+            notJoinedActions
+        }
+    }
+
+    private var notJoinedActions: some View {
+        HStack(spacing: 8) {
+            // Bouton aperçu — voir qui est déjà dans le match, sans
+            // avoir à s'engager à le rejoindre. Manquait complètement
+            // avant : la seule action disponible ici était "Rejoindre".
+            Button {
+                showSheet = true
+            } label: {
+                Image(systemName: "sportscourt.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Pitcha.navy)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Color.black.opacity(0.06)))
+            }
+
             if match.isRankedMatch {
                 pillButton("Rejoindre avec mon club", colors: [Color(hex: "F2C740"), Color(hex: "B8860B")]) {
                     showClubJoinPicker = true
                 }
             } else {
-                pillButton("Rejoindre • 1 coin", colors: [Pitcha.teal, Pitcha.mint]) {
+                pillButton(session.user?.hasPremium == true ? "Rejoindre" : "Rejoindre • 1 coin", colors: [Pitcha.teal, Pitcha.mint]) {
                     showJoinConfirm = true
                 }
             }
@@ -552,6 +624,7 @@ struct MatchCard: View {
 
 struct ClubJoinPickerSheet: View {
     let match: Match
+    var onJoined: () -> Void = {}
     @EnvironmentObject var session: SessionViewModel
     @Environment(\.dismiss) private var dismiss
 
@@ -645,11 +718,45 @@ struct ClubJoinPickerSheet: View {
         Task {
             do {
                 try await FirebaseService.shared.joinRankedMatchWithClub(matchId: matchId, club: club, captainUid: captainUid)
+                onJoined()
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription
             }
             isJoining = false
+        }
+    }
+}
+
+// MARK: - Bandeau discret "tes prochains matchs organisés"
+
+struct MyUpcomingMatchesBanner: View {
+    let matches: [Match]
+    let onTap: (Match) -> Void
+
+    var body: some View {
+        if !matches.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(matches) { match in
+                        Button { onTap(match) } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "calendar.badge.clock")
+                                    .font(.caption2)
+                                Text(match.date, format: .dateTime.day().month(.abbreviated).hour().minute())
+                                    .font(.caption.weight(.bold))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Capsule().fill(Pitcha.teal.opacity(0.12)))
+                            .foregroundStyle(Pitcha.tealDark)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+            .padding(.top, 4)
+            .transition(.opacity)
         }
     }
 }

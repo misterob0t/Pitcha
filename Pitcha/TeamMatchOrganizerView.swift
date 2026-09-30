@@ -9,10 +9,9 @@ struct TeamMatchOrganizerView: View {
 
     @State private var step = 0
     @State private var goingForward = true
-    private let stepCount = 5
+    private let stepCount = 4
 
     @State private var selectedType: MatchType = .five
-    @State private var isRanked = false
     @State private var date = Calendar.current.date(byAdding: .hour, value: 2, to: Date()) ?? Date()
     @State private var maxPlayers = 10
     @State private var address = ""
@@ -22,9 +21,8 @@ struct TeamMatchOrganizerView: View {
     private var stepHeight: CGFloat {
         switch step {
         case 0: return 400
-        case 1: return 360   // Normal / Classé
-        case 2: return 640
-        case 3: return 560   // compteur joueurs : même hauteur que dans Matchs
+        case 1: return 640
+        case 2: return 560   // compteur joueurs : même hauteur que dans Matchs
         default: return 420
         }
     }
@@ -32,17 +30,16 @@ struct TeamMatchOrganizerView: View {
     private var stepTitle: String {
         switch step {
         case 0: return "Type de match"
-        case 1: return "Normal ou Classé ?"
-        case 2: return "Date et heure"
-        case 3: return "Nombre de joueurs"
+        case 1: return "Date et heure"
+        case 2: return "Nombre de joueurs"
         default: return "Lieu du match"
         }
     }
 
     private var canGoNext: Bool {
         switch step {
-        case 2: return date > Date()
-        case 4: return address.trimmingCharacters(in: .whitespaces).count >= 3
+        case 1: return date > Date()
+        case 3: return address.trimmingCharacters(in: .whitespaces).count >= 3
         default: return true
         }
     }
@@ -95,10 +92,8 @@ struct TeamMatchOrganizerView: View {
                     case 0:
                         TypeStep(selectedType: $selectedType, maxPlayers: $maxPlayers)
                     case 1:
-                        TeamRankedModeStep(isRanked: $isRanked)
-                    case 2:
                         DateStep(date: $date)
-                    case 3:
+                    case 2:
                         TeamPlayersStep(maxPlayers: $maxPlayers, type: selectedType)
                     default:
                         TeamLocationStep(address: $address)
@@ -189,8 +184,7 @@ struct TeamMatchOrganizerView: View {
             isPrivate: true,
             zone: nil,
             createdAt: Date(),
-            unavailable: [],
-            isRanked: isRanked
+            unavailable: []
         )
 
         do {
@@ -204,34 +198,6 @@ struct TeamMatchOrganizerView: View {
 }
 
 // MARK: - Étape joueurs (6 à 22, spécifique équipe)
-
-// MARK: - Étape Normal / Classé
-
-struct TeamRankedModeStep: View {
-    @Binding var isRanked: Bool
-
-    var body: some View {
-        VStack(spacing: 14) {
-            VisibilityCard(
-                title: "Normal",
-                subtitle: "Match fun — fait gagner de l'XP",
-                icon: "figure.soccer",
-                isSelected: !isRanked
-            ) { isRanked = false }
-
-            VisibilityCard(
-                title: "Classé",
-                subtitle: "Fait gagner ou perdre des PL — ton vrai niveau",
-                icon: "chart.line.uptrend.xyaxis",
-                isSelected: isRanked,
-                accentColors: [Color(hex: "F2C740"), Color(hex: "B8860B")]
-            ) { isRanked = true }
-
-            Spacer()
-        }
-        .padding(22)
-    }
-}
 
 struct TeamPlayersStep: View {
     @Binding var maxPlayers: Int
@@ -290,7 +256,7 @@ struct TeamLocationStep: View {
                 Text("Terrain / Adresse du match")
                     .font(.headline)
                     .foregroundStyle(Pitcha.navy)
-                PitchaTextField(icon: "mappin.and.ellipse", placeholder: "Ex : City Stade Coubertin", text: $address)
+                PitchaTextField(icon: "mappin.and.ellipse", placeholder: "Ex : City Stade de Meaux", text: $address)
             }
 
             Spacer()

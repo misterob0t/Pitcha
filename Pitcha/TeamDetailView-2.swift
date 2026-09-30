@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct TeamDetailView: View {
     let team: Team
@@ -25,8 +26,6 @@ struct TeamDetailView: View {
         guard !text.isEmpty else { return }
         messageText = ""
         Task { await viewModel.send(text: text, team: team, sender: session.user) }
-        // Le clavier doit rester ouvert après l'envoi — seul un glissement
-        // de la barre de saisie vers le bas doit le fermer (voir inputBar).
         isMessageFieldFocused = true
     }
 
@@ -51,8 +50,7 @@ struct TeamDetailView: View {
         .padding(.bottom, 2)
     }
 
-    // Barre de saisie du chat — le clavier reste ouvert après l'envoi ;
-    // glisser cette barre vers le bas le referme (au lieu du bouton envoyer).
+    // Barre de saisie du chat — texte, photo et vocal (comme le chat privé/club)
     private var inputBar: some View {
         HStack(spacing: 10) {
             TextField("Message...", text: $messageText)
@@ -65,12 +63,25 @@ struct TeamDetailView: View {
                 .background(Color(.secondarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 20))
 
-            Button { sendCurrentMessage() } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundStyle((messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !network.isConnected) ? .gray : Pitcha.teal)
+            if messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                PhotoPickerButton { data in
+                    guard let teamId = team.id, let sender = session.user else { return }
+                    Task { try? await FirebaseService.shared.sendPhotoTeamMessage(teamId: teamId, sender: sender, photoData: data) }
+                }
+                .disabled(!network.isConnected)
+                VoiceRecordButton { fileURL, duration in
+                    guard let teamId = team.id, let sender = session.user else { return }
+                    Task { try? await FirebaseService.shared.sendVoiceTeamMessage(teamId: teamId, sender: sender, fileURL: fileURL, duration: duration) }
+                }
+                .disabled(!network.isConnected)
+            } else {
+                Button { sendCurrentMessage() } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(!network.isConnected ? .gray : Pitcha.teal)
+                }
+                .disabled(!network.isConnected)
             }
-            .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !network.isConnected)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -87,22 +98,14 @@ struct TeamDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             if !viewModel.teamMatches.isEmpty {
-                if viewModel.teamMatches.count == 1, let onlyMatch = viewModel.teamMatches.first {
-                    // Un seul match : occupe toute la largeur au lieu d'être
-                    // collé à gauche comme dans un carrousel à un seul élément.
-                    TeamMatchCard(match: onlyMatch, team: team, viewModel: viewModel, fullWidth: true)
-                        .padding(.horizontal)
-                        .padding(.bottom, 8)
-                } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(viewModel.teamMatches) { match in
-                                TeamMatchCard(match: match, team: team, viewModel: viewModel)
-                            }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(viewModel.teamMatches) { match in
+                            TeamMatchCard(match: match, team: team, viewModel: viewModel)
                         }
-                        .padding(.horizontal)
-                        .padding(.bottom, 8)
                     }
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
                 }
             }
 
@@ -158,7 +161,6 @@ struct TeamDetailView: View {
             TeamInfoSheet(
                 team: team,
                 isOwner: isOwner,
-                memberCount: viewModel.members.count,
                 members: viewModel.members,
                 onInvite: { showTeamInfo = false; showInviteSheet = true },
                 onLeave: { showTeamInfo = false; showLeaveConfirm = true },
@@ -172,7 +174,7 @@ struct TeamDetailView: View {
         }
         .sheet(isPresented: $showInviteSheet) {
             InvitePlayerSheet(viewModel: viewModel, team: team)
-                .presentationDetents([.height(300)])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .confirmationDialog("Quitter \(team.name) ?", isPresented: $showLeaveConfirm, titleVisibility: .visible) {
@@ -213,12 +215,12 @@ struct TeamDetailView: View {
     }
 }
 
-// MARK: - Bulle de message
+// MARK: - Bulle de message (texte / photo / vocal)
 
 struct MessageBubble: View {
     let message: ChatMessage
     let isMine: Bool
-    /// Contexte d'où vient ce message, pour le signalement ("team" ou "dm").
+    /// Contexte d'où vient ce message, pour le signalement ("team", "dm" ou "club").
     /// Optionnel pour rester compatible avec les appels existants.
     var context: String = "team"
     var contextId: String? = nil
@@ -231,10 +233,9 @@ struct MessageBubble: View {
     }
 
     private var timeText: String {
-        guard let sentAt = message.sentAt else { return "..." }
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        return formatter.string(from: sentAt)
+        return formatter.string(from: message.sentAt ?? Date())
     }
 
     var body: some View {
@@ -252,8 +253,8 @@ struct MessageBubble: View {
     }
 
     private var bubble: some View {
-        HStack(alignment: .bottom, spacing: 0) {
-            if isMine { Spacer(minLength: 48) }
+        HStack {
+            if isMine { Spacer(minLength: 60) }
 
             VStack(alignment: isMine ? .trailing : .leading, spacing: 3) {
                 if !isMine {
@@ -274,26 +275,124 @@ struct MessageBubble: View {
                         )
                     }
                 }
-                Text(isFromBlockedUser ? "🚫 Message masqué (utilisateur bloqué)" : message.text)
-                    .italic(isFromBlockedUser)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(isFromBlockedUser ? Color.gray.opacity(0.15) : (isMine ? Color.teal : Color(.secondarySystemBackground)))
-                    .foregroundStyle(isFromBlockedUser ? AnyShapeStyle(.secondary) : (isMine ? AnyShapeStyle(Color.white) : AnyShapeStyle(.primary)))
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                content
                 Text(timeText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
-            if !isMine { Spacer(minLength: 48) }
+            if !isMine { Spacer(minLength: 60) }
         }
-        .padding(.horizontal, 4)
+    }
+
+    // Contenu du message : texte, photo ou vocal — avant, seul le texte
+    // était affiché, donc une photo ou un vocal envoyé créait une bulle
+    // vide (message.text reste "" pour ces deux types).
+    @ViewBuilder
+    private var content: some View {
+        if isFromBlockedUser {
+            Text("🚫 Message masqué (utilisateur bloqué)")
+                .italic()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Color.gray.opacity(0.15))
+                .foregroundStyle(.secondary)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+        } else if message.isPhoto, let urlString = message.photoURL, let url = URL(string: urlString) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .failure:
+                    ZStack {
+                        Color.gray.opacity(0.15)
+                        Image(systemName: "photo")
+                            .foregroundStyle(.secondary)
+                    }
+                default:
+                    ZStack {
+                        Color.gray.opacity(0.08)
+                        ProgressView()
+                    }
+                }
+            }
+            .frame(width: 210, height: 210)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .clipped()
+        } else if message.isVoice, let urlString = message.voiceURL, let url = URL(string: urlString) {
+            VoiceMessageBubble(url: url, duration: message.voiceDuration ?? 0, isMine: isMine)
+        } else {
+            Text(message.text)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(isMine ? Color.teal : Color(.secondarySystemBackground))
+                .foregroundStyle(isMine ? AnyShapeStyle(Color.white) : AnyShapeStyle(.primary))
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+        }
     }
 }
 
-// MARK: - Sheet invitation
+// MARK: - Bulle de message vocal (lecture inline)
+
+struct VoiceMessageBubble: View {
+    let url: URL
+    let duration: Double
+    let isMine: Bool
+
+    @State private var player: AVPlayer?
+    @State private var isPlaying = false
+
+    private var durationText: String {
+        let seconds = max(0, Int(duration.rounded()))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    var body: some View {
+        Button {
+            togglePlayback()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.subheadline)
+                Image(systemName: "waveform")
+                    .font(.subheadline)
+                Text(durationText)
+                    .font(.caption.bold())
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(isMine ? Color.teal : Color(.secondarySystemBackground))
+            .foregroundStyle(isMine ? AnyShapeStyle(Color.white) : AnyShapeStyle(.primary))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+        }
+        .buttonStyle(.plain)
+        .onDisappear {
+            player?.pause()
+        }
+    }
+
+    private func togglePlayback() {
+        if isPlaying {
+            player?.pause()
+            isPlaying = false
+            return
+        }
+        let item = AVPlayerItem(url: url)
+        let newPlayer = AVPlayer(playerItem: item)
+        player = newPlayer
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { _ in
+            isPlaying = false
+        }
+        newPlayer.play()
+        isPlaying = true
+    }
+}
+
+// MARK: - Sheet invitation (pseudo exact OU choix parmi les amis)
 
 struct InvitePlayerSheet: View {
     @ObservedObject var viewModel: TeamDetailViewModel
@@ -301,92 +400,123 @@ struct InvitePlayerSheet: View {
     @EnvironmentObject var session: SessionViewModel
     @Environment(\.dismiss) private var dismiss
 
-    @State private var searchText = ""
+    @State private var pseudo = ""
     @State private var friends: [AppUser] = []
-    @State private var isLoading = true
-    @State private var addingUid: String?
 
-    private var filteredFriends: [AppUser] {
-        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return friends }
-        return friends.filter { $0.pseudo.localizedCaseInsensitiveContains(searchText) }
+    // Seuls les amis qui ne sont pas déjà dans l'équipe sont proposés.
+    private var availableFriends: [AppUser] {
+        friends.filter { friend in
+            guard let uid = friend.id else { return false }
+            return !team.memberIds.contains(uid)
+        }
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            Text("Ajouter un ami à l'équipe")
+        VStack(spacing: 16) {
+            Text("Ajouter un joueur")
                 .font(.title3.bold())
                 .padding(.top, 24)
 
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Rechercher un ami...", text: $searchText)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-            }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.05)))
-            .padding(.horizontal)
+            Text("Seuls tes amis peuvent rejoindre l'équipe")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            PitchaTextField(icon: "person.fill", placeholder: "Pseudo exact", text: $pseudo)
+                .textInputAutocapitalization(.never)
+                .padding(.horizontal)
 
             if let result = viewModel.inviteResult {
                 Text(result)
                     .font(.footnote)
                     .foregroundStyle(result.contains("✓") ? .green : .red)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
             }
 
-            if isLoading {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if friends.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "person.2.slash")
-                        .font(.system(size: 34))
-                        .foregroundStyle(.secondary)
-                    Text("Tu n'as pas encore d'amis à ajouter.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+            Button {
+                Task {
+                    await viewModel.invite(
+                        pseudo: pseudo,
+                        team: team,
+                        friendUids: session.user?.friends ?? []
+                    )
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if filteredFriends.isEmpty {
-                Text("Aucun ami ne correspond à cette recherche.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 30)
-                Spacer()
-            } else {
-                List(filteredFriends) { friend in
-                    HStack(spacing: 12) {
-                        AvatarImage(user: friend, size: 40)
-                        Text(friend.pseudo).font(.subheadline.weight(.bold))
-                        Spacer()
-                        if addingUid == friend.id {
-                            ProgressView()
-                        } else {
-                            Button {
-                                addingUid = friend.id
-                                Task {
-                                    if let uid = friend.id {
-                                        await viewModel.inviteFriend(uid: uid, pseudo: friend.pseudo, team: team)
-                                    }
-                                    addingUid = nil
-                                }
-                            } label: {
-                                Text("Ajouter")
-                                    .font(.caption.bold())
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 6)
-                                    .background(Capsule().fill(Pitcha.gradient))
-                            }
-                        }
+            } label: {
+                Group {
+                    if viewModel.isWorking {
+                        ProgressView().tint(.white)
+                    } else {
+                        Text("Ajouter").fontWeight(.bold)
                     }
                 }
-                .listStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(pseudo.trimmingCharacters(in: .whitespaces).isEmpty ? Color.gray.opacity(0.4) : Color.teal)
+                .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
+            .disabled(pseudo.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.isWorking)
+            .padding(.horizontal)
+
+            Divider()
+                .padding(.horizontal)
+
+            if availableFriends.isEmpty {
+                VStack(spacing: 6) {
+                    Text("Aucun ami disponible")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.secondary)
+                    Text("Tous tes amis sont déjà dans l'équipe, ou tu n'as pas encore d'amis.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 30)
+                }
+                .padding(.top, 20)
+                Spacer()
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Tes amis")
+                        .font(.subheadline.weight(.heavy))
+                        .foregroundStyle(Pitcha.navy)
+                        .padding(.horizontal)
+
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(availableFriends) { friend in
+                                Button {
+                                    guard let uid = friend.id else { return }
+                                    Task { await viewModel.inviteFriend(uid: uid, pseudo: friend.pseudo, team: team) }
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        InitialsAvatar(text: friend.pseudo, size: 40, cornerStyle: .circle)
+                                        Text(friend.pseudo)
+                                            .font(.subheadline.weight(.heavy))
+                                            .foregroundStyle(Pitcha.navy)
+                                        Spacer()
+                                        if viewModel.isWorking {
+                                            ProgressView()
+                                        } else {
+                                            Image(systemName: "plus.circle.fill")
+                                                .font(.title3)
+                                                .foregroundStyle(Pitcha.teal)
+                                        }
+                                    }
+                                    .padding(10)
+                                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.04)))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(viewModel.isWorking)
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.bottom, 20)
+                    }
+                }
             }
         }
         .task {
-            guard let uids = session.user?.friends, !uids.isEmpty else { isLoading = false; return }
-            friends = (try? await FirebaseService.shared.fetchUsers(uids: uids)) ?? []
-            isLoading = false
+            friends = (try? await FirebaseService.shared.fetchUsers(uids: session.user?.friends ?? [])) ?? []
         }
         .onDisappear {
             viewModel.inviteResult = nil
@@ -401,12 +531,10 @@ struct TeamMatchCard: View {
     let match: Match
     let team: Team
     @ObservedObject var viewModel: TeamDetailViewModel
-    /// true quand c'est l'unique match affiché (hors carrousel) : occupe
-    /// alors toute la largeur disponible au lieu d'une largeur fixe.
-    var fullWidth: Bool = false
     @EnvironmentObject var session: SessionViewModel
 
     @State private var showDeleteConfirm = false
+    @State private var selectedMember: AppUser?
 
     private var uid: String? { session.user?.id }
     private var isAvailable: Bool { match.isParticipant(uid) }
@@ -467,7 +595,8 @@ struct TeamMatchCard: View {
                         uids: match.participants,
                         emptySlots: max(0, min(match.maxPlayers - match.participants.count, 3)),
                         unavailableStyle: false,
-                        viewModel: viewModel
+                        viewModel: viewModel,
+                        selectedMember: $selectedMember
                     )
 
                     Button {
@@ -493,7 +622,8 @@ struct TeamMatchCard: View {
                         uids: match.unavailableIds,
                         emptySlots: match.unavailableIds.isEmpty ? 1 : 0,
                         unavailableStyle: true,
-                        viewModel: viewModel
+                        viewModel: viewModel,
+                        selectedMember: $selectedMember
                     )
 
                     Button {
@@ -511,7 +641,7 @@ struct TeamMatchCard: View {
             }
         }
         .padding(14)
-        .frame(maxWidth: fullWidth ? .infinity : 320)
+        .frame(width: 320)
         .background(
             RoundedRectangle(cornerRadius: 20)
                 .fill(.white)
@@ -530,27 +660,36 @@ struct TeamMatchCard: View {
         } message: {
             Text("Les membres seront prévenus dans le chat.")
         }
+        .sheet(item: $selectedMember) { member in
+            PublicProfileSheet(member: member)
+        }
     }
 }
 
 /// Cercles de participants empilés horizontalement (chevauchement -10pt),
-/// avec slots vides en pointillé.
+/// avec slots vides en pointillé. Tap sur une bulle = voir le profil.
 struct ParticipantStack: View {
     let uids: [String]
     let emptySlots: Int
     let unavailableStyle: Bool
     @ObservedObject var viewModel: TeamDetailViewModel
+    @Binding var selectedMember: AppUser?
 
     private let maxVisible = 4
 
     var body: some View {
         HStack(spacing: -10) {
             ForEach(uids.prefix(maxVisible), id: \.self) { uid in
-                if unavailableStyle {
-                    UnavailableParticipantIcon(pseudo: viewModel.member(for: uid)?.pseudo ?? "?")
-                } else {
-                    ParticipantIcon(pseudo: viewModel.member(for: uid)?.pseudo ?? "?")
+                Button {
+                    if let member = viewModel.member(for: uid) { selectedMember = member }
+                } label: {
+                    if unavailableStyle {
+                        UnavailableParticipantIcon(pseudo: viewModel.member(for: uid)?.pseudo ?? "?")
+                    } else {
+                        ParticipantIcon(pseudo: viewModel.member(for: uid)?.pseudo ?? "?")
+                    }
                 }
+                .buttonStyle(.plain)
             }
             if uids.count > maxVisible {
                 ZStack {
@@ -641,114 +780,104 @@ struct TeamActionChip: View {
 }
 
 
-// MARK: - Fiche équipe (tap sur le nom)
+// MARK: - Fiche équipe (tap sur le nom) — actions + liste des membres
 
 struct TeamInfoSheet: View {
     let team: Team
     let isOwner: Bool
-    let memberCount: Int
     let members: [AppUser]
     let onInvite: () -> Void
     let onLeave: () -> Void
     let onDelete: () -> Void
 
+    @State private var selectedMember: AppUser?
+
     var body: some View {
-        VStack(spacing: 18) {
-            // En-tête : écusson + nom + membres
-            VStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(CrestPalette.color(named: team.crestColorName).gradient)
-                        .frame(width: 72, height: 72)
-                    Image(systemName: team.crestIcon ?? "shield.fill")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.white)
+        ScrollView {
+            VStack(spacing: 18) {
+                // En-tête : écusson + nom + membres
+                VStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(CrestPalette.color(named: team.crestColorName).gradient)
+                            .frame(width: 72, height: 72)
+                        Image(systemName: team.crestIcon ?? "shield.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.white)
+                    }
+                    Text(team.name)
+                        .font(.title3.weight(.heavy))
+                        .foregroundStyle(Pitcha.navy)
+                    Text("\(members.count) membre\(members.count > 1 ? "s" : "")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text(team.name)
-                    .font(.title3.weight(.heavy))
-                    .foregroundStyle(Pitcha.navy)
-                Text("\(memberCount) membre\(memberCount > 1 ? "s" : "")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.top, 18)
+                .padding(.top, 18)
 
-            VStack(spacing: 10) {
-                TeamInfoRow(icon: "person.badge.plus", label: "Ajouter un joueur", tint: Pitcha.tealDark, action: onInvite)
-                if isOwner {
-                    TeamInfoRow(icon: "trash", label: "Supprimer l'équipe", tint: .red, action: onDelete)
-                } else {
-                    TeamInfoRow(icon: "rectangle.portrait.and.arrow.right", label: "Quitter l'équipe", tint: .red, action: onLeave)
-                }
-            }
-            .padding(.horizontal)
-
-            // Liste des membres du groupe
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Membres")
-                    .font(.subheadline.weight(.heavy))
-                    .foregroundStyle(Pitcha.navy)
-                    .padding(.horizontal, 20)
-
-                if members.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 20)
-                } else {
-                    ScrollView {
-                        VStack(spacing: 6) {
-                            ForEach(members) { member in
-                                MemberRow(member: member, isOwner: member.id == team.ownerId)
-                            }
-                        }
-                        .padding(.horizontal)
+                VStack(spacing: 10) {
+                    TeamInfoRow(icon: "person.badge.plus", label: "Ajouter un joueur", tint: Pitcha.tealDark, action: onInvite)
+                    if isOwner {
+                        TeamInfoRow(icon: "trash", label: "Supprimer l'équipe", tint: .red, action: onDelete)
+                    } else {
+                        TeamInfoRow(icon: "rectangle.portrait.and.arrow.right", label: "Quitter l'équipe", tint: .red, action: onLeave)
                     }
                 }
+                .padding(.horizontal)
+
+                // Liste des membres — juste en dessous des actions
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Membres")
+                        .font(.headline.weight(.heavy))
+                        .foregroundStyle(Pitcha.navy)
+                        .padding(.horizontal)
+
+                    VStack(spacing: 8) {
+                        ForEach(members) { member in
+                            Button {
+                                selectedMember = member
+                            } label: {
+                                HStack(spacing: 12) {
+                                    AvatarImage(user: member, size: 44)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 6) {
+                                            Text(member.pseudo)
+                                                .font(.subheadline.weight(.heavy))
+                                                .foregroundStyle(Pitcha.navy)
+                                            if member.id == team.ownerId {
+                                                Image(systemName: "crown.fill")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.yellow)
+                                            }
+                                        }
+                                        Text("Niv. \(member.level) · \(member.overall) OVR")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(.white)
+                                        .shadow(color: .black.opacity(0.05), radius: 6, y: 3)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                .padding(.bottom, 24)
             }
-            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
         .background(Pitcha.background)
-    }
-}
-
-// MARK: - Ligne membre (avatar + pseudo + badge capitaine)
-
-struct MemberRow: View {
-    let member: AppUser
-    let isOwner: Bool
-
-    var body: some View {
-        HStack(spacing: 12) {
-            AvatarImage(user: member, size: 40)
-
-            Text(member.pseudo)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Pitcha.navy)
-                .lineLimit(1)
-
-            if isOwner {
-                HStack(spacing: 3) {
-                    Image(systemName: "crown.fill")
-                        .font(.system(size: 9, weight: .bold))
-                    Text("CAPITAINE")
-                        .font(.system(size: 9, weight: .heavy))
-                        .kerning(0.4)
-                }
-                .foregroundStyle(Pitcha.gold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Pitcha.gold.opacity(0.12)))
-            }
-
-            Spacer()
+        .sheet(item: $selectedMember) { member in
+            PublicProfileSheet(member: member)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(.white)
-        )
     }
 }
 
@@ -788,6 +917,8 @@ struct TeamRankingSheet: View {
     let team: Team
     let members: [AppUser]
 
+    @State private var selectedMember: AppUser?
+
     private var ranked: [AppUser] {
         members.sorted {
             ($0.totalGoals, $0.xp) > ($1.totalGoals, $1.xp)
@@ -802,11 +933,20 @@ struct TeamRankingSheet: View {
                     if ranked.count >= 3 {
                         HStack(alignment: .bottom, spacing: 10) {
                             // 2e
-                            PodiumMember(user: ranked[1], rank: 2, height: 80)
+                            Button { selectedMember = ranked[1] } label: {
+                                PodiumMember(user: ranked[1], rank: 2, height: 80)
+                            }
+                            .buttonStyle(.plain)
                             // 1er
-                            PodiumMember(user: ranked[0], rank: 1, height: 110)
+                            Button { selectedMember = ranked[0] } label: {
+                                PodiumMember(user: ranked[0], rank: 1, height: 110)
+                            }
+                            .buttonStyle(.plain)
                             // 3e
-                            PodiumMember(user: ranked[2], rank: 3, height: 60)
+                            Button { selectedMember = ranked[2] } label: {
+                                PodiumMember(user: ranked[2], rank: 3, height: 60)
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(.horizontal)
                         .padding(.top, 8)
@@ -815,7 +955,10 @@ struct TeamRankingSheet: View {
                     // Liste complète
                     LazyVStack(spacing: 10) {
                         ForEach(Array(ranked.enumerated()), id: \.element.id) { index, player in
-                            TeamRankRow(player: player, rank: index + 1)
+                            Button { selectedMember = player } label: {
+                                TeamRankRow(player: player, rank: index + 1)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal)
@@ -825,6 +968,9 @@ struct TeamRankingSheet: View {
             .background(Pitcha.background)
             .navigationTitle("Classement · \(team.name)")
             .navigationBarTitleDisplayMode(.inline)
+        }
+        .sheet(item: $selectedMember) { member in
+            PublicProfileSheet(member: member)
         }
     }
 }
@@ -924,7 +1070,7 @@ struct TeamRankRow: View {
                 Text(player.pseudo)
                     .font(.subheadline.weight(.heavy))
                     .foregroundStyle(Pitcha.navy)
-                Text("Niv. \(player.level) · \(player.rankedDivisionEnum?.displayName ?? "Non classé")")
+                Text("Niv. \(player.level) · \(player.overall) général")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

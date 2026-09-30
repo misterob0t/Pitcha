@@ -60,11 +60,24 @@ struct FriendChatView: View {
                     .padding(.horizontal, 14).padding(.vertical, 9)
                     .background(Color(.secondarySystemBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 20))
-                Button { sendCurrentMessage() } label: {
-                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
-                        .foregroundStyle((messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !network.isConnected) ? .gray : Pitcha.teal)
+                if messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    PhotoPickerButton { data in
+                        guard let chatId, let sender = session.user else { return }
+                        Task { try? await FirebaseService.shared.sendPhotoDMMessage(chatId: chatId, sender: sender, photoData: data) }
+                    }
+                    .disabled(!network.isConnected)
+                    VoiceRecordButton { fileURL, duration in
+                        guard let chatId, let sender = session.user else { return }
+                        Task { try? await FirebaseService.shared.sendVoiceDMMessage(chatId: chatId, sender: sender, fileURL: fileURL, duration: duration) }
+                    }
+                    .disabled(!network.isConnected)
+                } else {
+                    Button { sendCurrentMessage() } label: {
+                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
+                            .foregroundStyle(!network.isConnected ? .gray : Pitcha.teal)
+                    }
+                    .disabled(!network.isConnected)
                 }
-                .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !network.isConnected)
             }
             .padding(.horizontal).padding(.vertical, 8)
             .gesture(
@@ -113,6 +126,12 @@ struct FriendChatView: View {
             listener?.remove()
             listener = FirebaseService.shared.listenDMMessages(chatId: chatId) { msgs in
                 Task { @MainActor in messages = msgs }
+            }
+            if let uid = session.user?.id {
+                Task {
+                    await FirebaseService.shared.markDMRead(chatId: chatId, uid: uid)
+                    await session.refreshUnreadCount(uid: uid)
+                }
             }
         }
         .onDisappear {
@@ -289,5 +308,3 @@ struct FriendActionRow: View {
         }
     }
 }
-
-

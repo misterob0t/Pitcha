@@ -25,7 +25,25 @@ extension FirebaseService {
     /// pour rester 100% compatible avec RankRow/AvatarImage sans toucher
     /// à la vue Classement.
     func fetchPrecomputedLeaderboard() async throws -> [AppUser]? {
-        let doc = try await db.collection("leaderboard").document("top").getDocument()
+        try await fetchPrecomputedDoc(id: "top")
+    }
+
+    /// Même principe que le mondial, mais un document précalculé PAR VILLE
+    /// (écrit par la même Cloud Function planifiée) — plus de requête live
+    /// filtrée à chaque ouverture d'écran, une seule lecture comme pour le
+    /// mondial. Retombe sur fetchRegionalLeaderboard (requête live) si le
+    /// document de cette ville n'existe pas encore ou est trop ancien —
+    /// utile aussi pour une ville toute nouvelle sans encore de joueurs
+    /// dedans au moment du dernier calcul planifié.
+    func fetchPrecomputedRegionalLeaderboard(city: String) async throws -> [AppUser]? {
+        let cityKey = city.replacingOccurrences(of: "/", with: "-")
+        return try await fetchPrecomputedDoc(id: "regional_\(cityKey)")
+    }
+
+    /// Décodage partagé entre le mondial et le régional — même structure
+    /// de document des deux côtés, seul l'identifiant du document change.
+    private func fetchPrecomputedDoc(id: String) async throws -> [AppUser]? {
+        let doc = try await db.collection("leaderboard").document(id).getDocument()
         guard let data = doc.data(),
               let updatedAt = (data["updatedAt"] as? Timestamp)?.dateValue(),
               Date().timeIntervalSince(updatedAt) < 30 * 60,
@@ -36,7 +54,7 @@ extension FirebaseService {
             guard let uid = dict["uid"] as? String,
                   let pseudo = dict["pseudo"] as? String else { return nil }
             var user = AppUser(
-                id: uid,
+                id: nil,
                 pseudo: pseudo,
                 email: "",
                 coins: 0,
@@ -48,12 +66,15 @@ extension FirebaseService {
                 teamIds: [],
                 createdAt: Date()
             )
+            user.precomputedUid = uid
             user.photoURL = dict["photoURL"] as? String
             user.goals = dict["goals"] as? Int
             user.wins = dict["wins"] as? Int
             user.draws = dict["draws"] as? Int
             user.losses = dict["losses"] as? Int
             user.matchesPlayed = dict["matchesPlayed"] as? Int
+            user.rankedDivision = dict["rankedDivision"] as? String
+            user.rankedPL = dict["rankedPL"] as? Int
             return user
         }
     }
@@ -68,10 +89,12 @@ extension FirebaseService {
     }
 
     /// Classement Régional : uniquement les joueurs de la même ville que
-    /// l'utilisateur (champ "city", choisi à l'inscription). Requête live
-    /// (pas de précalcul possible ville par ville sans exploser le nombre
-    /// de documents précalculés) — reste peu coûteux car une ville donnée
-    /// ne compte qu'une fraction des utilisateurs totaux.
+    /// l'utilisateur (champ "city", choisi à l'inscription).
+    ///
+    /// ⚠️ Coûteux (requête live filtrée à chaque appel) : utilisé
+    /// uniquement en repli si le document régional précalculé de cette
+    /// ville est absent/trop vieux — voir fetchPrecomputedRegionalLeaderboard,
+    /// qui doit toujours être tenté en premier.
     ///
     /// ⚠️ Nécessite un index composite Firestore (city + xp descending).
     /// Au premier appel, Firestore renvoie une erreur avec un lien direct

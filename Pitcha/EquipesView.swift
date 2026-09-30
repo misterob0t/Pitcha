@@ -336,6 +336,8 @@ struct FriendRequestRow: View {
 
 struct FriendRow: View {
     let friend: AppUser
+    @EnvironmentObject var session: SessionViewModel
+    @State private var unread = 0
 
     var body: some View {
         HStack(spacing: 14) {
@@ -358,6 +360,14 @@ struct FriendRow: View {
 
             Spacer()
 
+            if unread > 0 {
+                Text("\(min(unread, 99))")
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 20, minHeight: 20)
+                    .background(Circle().fill(Color.red))
+            }
+
             VStack(spacing: 2) {
                 Text(friend.rankedDivisionEnum?.shortCode ?? "NC")
                     .font(.headline.weight(.heavy))
@@ -373,6 +383,10 @@ struct FriendRow: View {
                 .fill(.white)
                 .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
         )
+        .task {
+            guard let myUid = session.user?.id, let friendUid = friend.id else { return }
+            unread = await FirebaseService.shared.fetchDMUnreadCount(myUid: myUid, friendUid: friendUid)
+        }
     }
 }
 
@@ -494,6 +508,7 @@ struct TopTab: View {
 struct TeamRow: View {
     let team: Team
     let isOwner: Bool
+    @EnvironmentObject var session: SessionViewModel
 
     var body: some View {
         HStack(spacing: 14) {
@@ -522,6 +537,16 @@ struct TeamRow: View {
             }
 
             Spacer()
+
+            let unread = team.unreadCount(for: session.user?.id)
+            if unread > 0 {
+                Text("\(min(unread, 99))")
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 22, minHeight: 22)
+                    .background(Circle().fill(Color.red))
+                    .padding(.trailing, 2)
+            }
 
             ZStack {
                 Circle()

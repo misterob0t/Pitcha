@@ -31,9 +31,15 @@ final class ClassementViewModel: ObservableObject {
                 // l'ajout de ce champ), on retombe sur Paris par défaut
                 // plutôt que de planter.
                 let city = user?.city ?? "Paris"
-                players = try await service.fetchRegionalLeaderboard(city: city)
+                // 1 lecture au lieu d'une requête filtrée à chaque fois :
+                // on tente d'abord le document précalculé de CETTE ville.
+                if let precomputed = try await service.fetchPrecomputedRegionalLeaderboard(city: city) {
+                    players = precomputed
+                } else {
+                    players = try await service.fetchRegionalLeaderboard(city: city)
+                }
                 if let user {
-                    if let index = players.firstIndex(where: { $0.id == user.id }) {
+                    if let index = players.firstIndex(where: { $0.effectiveId == user.id }) {
                         myRank = index + 1
                     } else {
                         myRank = try await service.fetchRegionalRankByGoals(city: city, goals: user.totalGoals)
@@ -51,7 +57,7 @@ final class ClassementViewModel: ObservableObject {
                     players = fetched.sorted { ($0.totalGoals, $0.xp) > ($1.totalGoals, $1.xp) }
                 }
                 if let user {
-                    if let index = players.firstIndex(where: { $0.id == user.id }) {
+                    if let index = players.firstIndex(where: { $0.effectiveId == user.id }) {
                         myRank = index + 1
                     } else {
                         myRank = try await service.fetchRankByGoals(goals: user.totalGoals)
@@ -63,7 +69,7 @@ final class ClassementViewModel: ObservableObject {
     }
 
     func isMe(_ player: AppUser, user: AppUser?) -> Bool {
-        player.id != nil && player.id == user?.id
+        player.effectiveId != nil && player.effectiveId == user?.id
     }
 
     func isOutsideTop(user: AppUser?) -> Bool {

@@ -343,6 +343,17 @@ struct AppUser: Identifiable, Codable {
     var teamsJoinedCount: Int? = nil
     var teamsCreatedCountValue: Int { teamsCreatedCount ?? 0 }
     var teamsJoinedCountValue: Int { teamsJoinedCount ?? 0 }
+
+    // Utilisé UNIQUEMENT par fetchPrecomputedLeaderboard, qui reconstruit
+    // des AppUser à la main à partir d'un document précalculé (pas un vrai
+    // document utilisateur individuel). Écrire dans `id` (@DocumentID)
+    // depuis du code autre que le décodage Firestore déclenche un
+    // avertissement dans la console — inoffensif, mais on l'évite en
+    // passant par ce champ normal à la place.
+    var precomputedUid: String? = nil
+    /// Identifiant à utiliser partout où on affiche un joueur, qu'il vienne
+    /// d'un vrai document (id) ou d'un classement précalculé (precomputedUid).
+    var effectiveId: String? { id ?? precomputedUid }
     var createdAt: Date
 
     // Champs ajoutés après coup -> optionnels pour la compat des anciens comptes
@@ -378,6 +389,14 @@ struct AppUser: Identifiable, Codable {
     var premiumExpiresAt: Date? = nil      // date d'expiration de l'abonnement
     var city: String? = nil                // ville de résidence choisie à l'inscription — sert au classement Régional
     var activeSessionId: String? = nil     // identifiant de la session active — permet de forcer la déconnexion des autres appareils
+
+    // ===== Localisation précise (filtre "autour de moi") =====
+    // Distincte de `city` (texte libre saisi à l'inscription, non fiable
+    // pour un calcul de distance) : coordonnées réelles, résolues via
+    // MapKit au moment où l'utilisateur choisit sa position, ou mises à
+    // jour automatiquement si le GPS est autorisé.
+    var latitude: Double? = nil
+    var longitude: Double? = nil
 
     // ===== Système Classé (séparé de l'XP/carte) =====
     var rankedDivision: String? = nil      // nil = pas encore placé (games de placement à faire)
@@ -647,6 +666,13 @@ struct Match: Identifiable, Codable {
     var isRankedMatch: Bool { isRanked ?? false }
     var mvpUid: String? = nil          // désigné à la clôture, majorité des votes MVP
 
+    // Coordonnées réelles du lieu (filtre "autour de moi" + tri par
+    // distance). nil sur les matchs créés avant cette fonctionnalité —
+    // géré côté MatchsViewModel (ces matchs restent visibles, juste
+    // exclus du tri par proximité).
+    var latitude: Double? = nil
+    var longitude: Double? = nil
+
     var isFull: Bool { participants.count >= maxPlayers }
     var isPrivateMatch: Bool { isPrivate ?? false }
     var isGirlsOnly: Bool { tag == MatchTag.filles.rawValue }
@@ -700,6 +726,19 @@ struct Team: Identifiable, Codable {
     var createdAt: Date
     var crestIcon: String? = nil        // SF Symbol de l'écusson
     var crestColorName: String? = nil   // couleur de l'écusson
+    // Nombre de messages non lus, PAR utilisateur — mis à jour côté serveur
+    // à chaque nouveau message (incrément pour tout le monde sauf l'auteur),
+    // remis à 0 côté client par le lecteur lui-même en ouvrant le chat.
+    var unreadCounts: [String: Int]? = nil
+    // Dernier moment où chaque membre a ouvert ce chat — sert à savoir "qui
+    // a vu ce message" (a-t-il lu après l'envoi de CE message précis),
+    // sans avoir à stocker un accusé de lecture par message individuel.
+    var lastReadAt: [String: Date]? = nil
+
+    func unreadCount(for uid: String?) -> Int {
+        guard let uid else { return 0 }
+        return unreadCounts?[uid] ?? 0
+    }
 }
 
 // MARK: - Club Classé (roster fixe, sert à rejoindre un match Classé)
@@ -713,6 +752,14 @@ struct Club: Identifiable, Codable {
     var createdAt: Date
     var crestIcon: String? = nil
     var crestColorName: String? = nil
+    var unreadCounts: [String: Int]? = nil
+    // Même principe que sur Team — voir le commentaire là-bas.
+    var lastReadAt: [String: Date]? = nil
+
+    func unreadCount(for uid: String?) -> Int {
+        guard let uid else { return 0 }
+        return unreadCounts?[uid] ?? 0
+    }
 
     static let maxStarters = 5
     static let maxSubstitutes = 3
@@ -778,10 +825,51 @@ struct ChatMessage: Identifiable, Codable {
     var senderId: String
     var senderPseudo: String
     var text: String
+    // Vocal : présent seulement si ce message est un message vocal — le
+    // texte reste vide dans ce cas. Une seule collection de messages sert
+    // les deux types plutôt que d'en créer une séparée.
+    var voiceURL: String? = nil
+    var voiceDuration: Double? = nil   // en secondes
+    // Photo : même principe que le vocal, un seul champ de plus suffit
+    // plutôt qu'une collection dédiée.
+    var photoURL: String? = nil
     // Horodatage posé par le SERVEUR à l'écriture (pas l'horloge locale de
     // l'appareil qui envoie) — évite qu'un message envoyé "après" apparaisse
     // avant si les horloges de deux téléphones sont légèrement désynchronisées.
     @ServerTimestamp var sentAt: Date?
+
+    // Durée de vie limitée par défaut : un message disparaît de lui-même
+    // un moment après son envoi, sauf si quelqu'un a explicitement choisi
+    // de le garder plus longtemps. `expireAt` déclenche à la fois le
+    // filtrage côté app (disparition immédiate et précise à l'affichage)
+    // et la purge réelle côté serveur (règle TTL Firestore sur ce champ,
+    // configurée une fois dans la console — indépendante du code).
+    //
+    // `naturalExpireAt` est fixé une seule fois à l'envoi et jamais
+    // modifié ensuite — une mémoire de "quand ce message aurait dû
+    // disparaître normalement". Sert uniquement si quelqu'un retire la
+    // protection après coup : on restaure CETTE date plutôt qu'un nouveau
+    // délai de 24h à partir de maintenant. Si cette date est déjà passée
+    // au moment où la protection est retirée, le message disparaît
+    // immédiatement — cohérent avec "il aurait dû expirer depuis
+    // longtemps, la protection retirée ne lui redonne pas un sursis".
+    var expireAt: Date? = nil
+    var naturalExpireAt: Date? = nil
+    var kept: Bool? = nil
+
+    var isVoice: Bool { voiceURL != nil }
+    var isPhoto: Bool { photoURL != nil }
+    var isKept: Bool { kept == true }
+
+    /// Un message est visible tant qu'il n'a pas de date d'expiration, que
+    /// cette date n'est pas encore passée, ou qu'il a été explicitement
+    /// gardé. Utilisé par les 3 chats (dm/équipe/club) avant d'afficher
+    /// la liste — la vraie suppression des données, elle, est gérée côté
+    /// serveur par la règle TTL, indépendamment de ce filtre d'affichage.
+    var isStillVisible: Bool {
+        guard let expireAt, kept != true else { return true }
+        return expireAt > Date()
+    }
 }
 
 // MARK: - Invitation à un match (entre amis)

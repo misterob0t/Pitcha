@@ -1,52 +1,33 @@
 import Foundation
 import FirebaseFirestore
+import FirebaseFunctions
 
 // Extension Classé : la distribution de PL/XP est désormais gérée côté
 // serveur (Cloud Functions, voir matchFinalization.js) — plus aucune
 // écriture de rankedPL/xp/division n'est autorisée depuis le client.
-// Ce fichier ne garde que les votes de fiabilité, qui restent légers et
-// protégés par une garde anti-double-vote côté client.
+// Ce fichier ne garde que la notation de fiabilité, qui passe elle aussi
+// par une Cloud Function (touche les comptes d'AUTRES joueurs).
 extension FirebaseService {
 
-    /// Enregistre les notes de fiabilité données par un participant aux
-    /// autres joueurs d'un match. Une seule soumission par (match, votant) :
-    /// le document voteDoc sert à la fois de trace ET de garde contre le
-    /// double-comptage (vérifié dans la transaction avant tout incrément).
-    func submitReliabilityVotes(matchId: String, voterId: String, ratings: [String: Int]) async throws {
-        let voteDoc = matchesRef.document(matchId).collection("reliabilityVotes").document(voterId)
-
-        _ = try await db.runTransaction { transaction, errorPointer in
-            do {
-                let existing = try transaction.getDocument(voteDoc)
-                guard !existing.exists else {
-                    throw PitchaError.alreadyVoted
-                }
-
-                for (ratedUid, rating) in ratings {
-                    let clamped = max(1, min(5, rating))
-                    let ratedUserDoc = self.usersRef.document(ratedUid)
-                    transaction.updateData([
-                        "reliabilitySum": FieldValue.increment(Int64(clamped)),
-                        "reliabilityCount": FieldValue.increment(Int64(1))
-                    ], forDocument: ratedUserDoc)
-                }
-
-                transaction.setData([
-                    "ratings": ratings,
-                    "submittedAt": Timestamp(date: Date())
-                ], forDocument: voteDoc)
-                return nil
-            } catch {
-                errorPointer?.pointee = error as NSError
-                return nil
-            }
-        }
+    /// Note la fiabilité d'UN participant précis (en tapant sa bulle sur la
+    /// feuille de match) — pas un vote groupé pour tout le monde d'un coup.
+    /// Vérifié côté serveur (participant du match, match terminé, pas de
+    /// double vote sur CE joueur précis) plutôt que confié au client.
+    func rateParticipantReliability(matchId: String, targetUid: String, rating: Int) async throws {
+        let functions = Functions.functions(region: "europe-west1")
+        _ = try await functions.httpsCallable("rateParticipantReliability").call([
+            "matchId": matchId,
+            "targetUid": targetUid,
+            "rating": rating
+        ])
     }
 
-    /// Vérifie si l'utilisateur a déjà voté la fiabilité pour ce match
-    /// (pour ne pas réafficher la sheet de vote si déjà fait).
-    func hasSubmittedReliabilityVotes(matchId: String, voterId: String) async -> Bool {
+    /// Vérifie si l'utilisateur a déjà noté CE participant précis pour ce
+    /// match (pour désactiver/masquer le bouton une fois fait).
+    func hasRatedParticipant(matchId: String, voterId: String, targetUid: String) async -> Bool {
         let doc = matchesRef.document(matchId).collection("reliabilityVotes").document(voterId)
-        return (try? await doc.getDocument().exists) ?? false
+        guard let snap = try? await doc.getDocument(), snap.exists,
+              let ratedUids = snap.data()?["ratedUids"] as? [String] else { return false }
+        return ratedUids.contains(targetUid)
     }
 }

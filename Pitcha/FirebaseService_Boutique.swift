@@ -105,12 +105,9 @@ enum PremiumPlan: String, CaseIterable {
         }
     }
 
-    var priceLabel: String {
-        switch self {
-        case .monthly: return "2,99 €/mois"
-        case .yearly:  return "19,99 €/an"
-        }
-    }
+    // Le prix affiché vient désormais TOUJOURS du vrai produit (via
+    // RevenueCat) — voir BoutiqueViewModel.priceLabel(for:). Un prix codé
+    // en dur ici pouvait diverger de ce qu'Apple facture réellement.
 
     var displayName: String {
         switch self {

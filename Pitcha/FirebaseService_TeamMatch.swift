@@ -73,18 +73,22 @@ extension FirebaseService {
             .order(by: "sentAt")
             .limit(toLast: 100)
             .addSnapshotListener { snapshot, _ in
-                let messages = snapshot?.documents.compactMap { try? $0.data(as: ChatMessage.self) } ?? []
+                let messages = (snapshot?.documents.compactMap { try? $0.data(as: ChatMessage.self) } ?? [])
+                    .filter(\.isStillVisible)
                 onChange(messages)
             }
     }
 
     func sendDMMessage(chatId: String, sender: AppUser, text: String) async throws {
         guard let uid = sender.id else { return }
+        let expiry = Date().addingTimeInterval(24 * 3600)
         let message = ChatMessage(
             senderId: uid,
             senderPseudo: sender.pseudo,
             text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-            sentAt: nil
+            sentAt: nil,
+            expireAt: expiry,
+            naturalExpireAt: expiry
         )
         _ = try dmsRef.document(chatId).collection("messages").addDocument(from: message)
     }

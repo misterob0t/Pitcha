@@ -29,12 +29,9 @@ enum PitchaProductID {
     }
 }
 
-// MARK: - Vérification cryptographique (fonction libre, explicitement hors
-// isolation d'acteur — nécessaire car le projet a l'isolation par défaut
-// MainActor activée en Swift 6, sinon cette fonction serait implicitement
-// MainActor-isolée et inutilisable depuis Task.detached).
+// MARK: - Vérification cryptographique (fonction libre, sans isolation d'acteur)
 
-nonisolated func pitchaCheckVerified<T>(_ result: VerificationResult<T>) throws -> T {
+func pitchaCheckVerified<T>(_ result: VerificationResult<T>) throws -> T {
     switch result {
     case .unverified:
         throw StoreError.failedVerification
@@ -56,6 +53,16 @@ final class StoreKitManager: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var errorMessage: String? = nil
 
+    /// true dès qu'on a tenté au moins un chargement (réussi ou non) —
+    /// permet de distinguer "encore en train de charger" de "chargé mais
+    /// vide" côté UI.
+    @Published var hasAttemptedLoad = false
+
+    /// true si loadProducts() s'est terminé SANS erreur mais que le store
+    /// a renvoyé moins de produits que prévu (config App Store Connect,
+    /// pas un souci réseau de l'utilisateur).
+    @Published var productsPartiallyUnavailable = false
+
     private var transactionListenerTask: Task<Void, Error>? = nil
 
     private init() {
@@ -68,27 +75,43 @@ final class StoreKitManager: ObservableObject {
 
     // MARK: - Chargement des produits
 
-    func loadProducts() async {
+    /// Charge les produits avec 2 tentatives (backoff court) : certains
+    /// réseaux (roaming, VPN, Wi-Fi capricieux à l'étranger) font échouer
+    /// le premier appel StoreKit alors que le second passe.
+    func loadProducts(retries: Int = 2) async {
         isLoading = true
         errorMessage = nil
-        do {
-            let fetched = try await Product.products(for: PitchaProductID.allIDs)
-            products = fetched.sorted {
-                if $0.type == $1.type { return $0.price < $1.price }
-                return $0.type == .consumable
+
+        for attempt in 0...retries {
+            do {
+                let fetched = try await Product.products(for: PitchaProductID.allIDs)
+                products = fetched.sorted {
+                    if $0.type == $1.type { return $0.price < $1.price }
+                    return $0.type == .consumable
+                }
+                productsPartiallyUnavailable = fetched.count < PitchaProductID.allIDs.count
+                errorMessage = nil
+                isLoading = false
+                hasAttemptedLoad = true
+                return
+            } catch {
+                if attempt == retries {
+                    errorMessage = "Impossible de charger les produits : \(error.localizedDescription)"
+                } else {
+                    try? await Task.sleep(for: .seconds(1.5))
+                }
             }
-        } catch {
-            errorMessage = "Impossible de charger les produits : \(error.localizedDescription)"
         }
         isLoading = false
+        hasAttemptedLoad = true
     }
 
     // MARK: - Achat
 
     /// Retourne la transaction ET sa représentation JWS signée par Apple —
-    /// c'est ce JWS brut qui doit être envoyé à la Cloud Function
-    /// `verifyPurchase` pour vérification serveur avant tout crédit.
-    /// Ne JAMAIS créditer coins/Premium directement depuis le client.
+    /// c'est cette dernière qu'il faut envoyer à la Cloud Function
+    /// `verifyPurchase` (voir FirebaseService.verifyPurchaseServerSide).
+    /// nil si l'utilisateur a annulé.
     func purchase(_ product: Product) async throws -> (transaction: Transaction, jws: String)? {
         let result = try await product.purchase()
         switch result {
@@ -118,6 +141,17 @@ final class StoreKitManager: ObservableObject {
             errorMessage = "Restauration impossible : \(error.localizedDescription)"
         }
         isLoading = false
+    }
+
+    /// JWS de la transaction actuellement active pour un produit donné
+    /// (utilisé après restorePurchases() pour re-soumettre au serveur).
+    func currentEntitlementJWS(for productID: String) async -> String? {
+        for await result in Transaction.currentEntitlements {
+            if case .verified(let transaction) = result, transaction.productID == productID {
+                return result.jwsRepresentation
+            }
+        }
+        return nil
     }
 
     // MARK: - Statut Premium

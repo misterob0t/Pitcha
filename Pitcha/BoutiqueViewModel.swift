@@ -67,26 +67,42 @@ final class BoutiqueViewModel: ObservableObject {
         await storeKit.updatePremiumStatus()
     }
 
+    /// Bouton "Réessayer" affiché quand les produits n'ont pas pu être chargés.
+    func retryLoadingProducts() async {
+        await storeKit.loadProducts()
+    }
+
+    // MARK: - Prix affichés (toujours le vrai prix StoreKit, jamais codé en dur)
+
+    func priceLabel(for plan: PremiumPlan) -> String {
+        storeKit.product(for: plan.productID)?.displayPrice ?? "..."
+    }
+
+    func priceLabel(for pack: CoinPack) -> String {
+        storeKit.product(for: pack.id)?.displayPrice ?? "..."
+    }
+
     // MARK: - Abonnement Premium
 
     func subscribe(plan: PremiumPlan, user: AppUser?) async {
         guard user?.id != nil else { return }
         guard let product = storeKit.product(for: plan.productID) else {
-            errorMessage = "Produit introuvable. Vérifie ta connexion."
+            errorMessage = missingProductMessage()
             return
         }
         isWorking = true
         errorMessage = nil
         successMessage = nil
         do {
-            guard let purchased = try await storeKit.purchase(product) else {
+            guard let result = try await storeKit.purchase(product) else {
                 // Annulé par l'utilisateur
                 isWorking = false
                 return
             }
-            // Le crédit se fait côté serveur, après vérification de la
-            // signature Apple — jamais en écrivant directement le compte ici.
-            try await service.verifyPurchaseServerSide(jws: purchased.jws)
+            // Le crédit Premium se fait UNIQUEMENT côté serveur, après que
+            // la Cloud Function verifyPurchase ait vérifié la signature
+            // Apple de cette transaction précise.
+            try await service.verifyPurchaseServerSide(jws: result.jws)
             successMessage = "Bienvenue dans Pitcha Premium ! 🎉"
             purchaseTrigger.toggle()
         } catch {
@@ -100,21 +116,20 @@ final class BoutiqueViewModel: ObservableObject {
     func buyCoins(_ pack: CoinPack, user: AppUser?) async {
         guard user?.id != nil else { return }
         guard let product = storeKit.product(for: pack.id) else {
-            errorMessage = "Produit introuvable. Vérifie ta connexion."
+            errorMessage = missingProductMessage()
             return
         }
         isWorking = true
         errorMessage = nil
         successMessage = nil
         do {
-            guard let purchased = try await storeKit.purchase(product) else {
+            guard let result = try await storeKit.purchase(product) else {
                 isWorking = false
                 return
             }
-            // Le montant de coins est déterminé PAR LE SERVEUR à partir du
-            // vrai productId de la transaction vérifiée — jamais envoyé
-            // depuis le client, pour qu'il ne puisse pas être falsifié.
-            try await service.verifyPurchaseServerSide(jws: purchased.jws)
+            // Idem : le crédit de coins se fait côté serveur uniquement,
+            // sur la base de la transaction vérifiée par Apple.
+            try await service.verifyPurchaseServerSide(jws: result.jws)
             let amount = PitchaProductID.coinsAmount(for: pack.id)
             successMessage = "+\(amount) coins ajoutés ! 🪙"
             purchaseTrigger.toggle()
@@ -122,6 +137,21 @@ final class BoutiqueViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isWorking = false
+    }
+
+    /// Message d'erreur précis selon la cause réelle : on ne dit "vérifie
+    /// ta connexion" QUE si le chargement a vraiment échoué avec une
+    /// erreur réseau. Si le chargement a réussi mais que le produit n'est
+    /// simplement pas dans la liste renvoyée par Apple pour ce compte/cette
+    /// région, on le dit clairement.
+    private func missingProductMessage() -> String {
+        if let storeError = storeKit.errorMessage {
+            return storeError
+        }
+        if storeKit.hasAttemptedLoad {
+            return "Cet achat n'est pas disponible sur ton compte App Store pour le moment. Vérifie que ton pays/région App Store est bien renseigné dans Réglages > [ton nom] > Média et achats, puis réessaie."
+        }
+        return "Produit introuvable. Réessaie dans quelques secondes."
     }
 
     // MARK: - Restauration des achats
@@ -132,29 +162,23 @@ final class BoutiqueViewModel: ObservableObject {
         errorMessage = nil
         successMessage = nil
         await storeKit.restorePurchases()
+
         if storeKit.isPremiumActive {
-            do {
-                // On renvoie le JWS de l'entitlement actif au serveur — la
-                // protection anti-rejeu côté fonction fait que ça ne crédite
-                // rien en double si c'était déjà traité, c'est juste une
-                // re-confirmation sûre.
-                var activeJWS: String? = nil
-                for await result in Transaction.currentEntitlements {
-                    if let t = try? pitchaCheckVerified(result),
-                       (t.productID == PitchaProductID.premiumMonthly ||
-                        t.productID == PitchaProductID.premiumYearly) {
-                        activeJWS = result.jwsRepresentation
-                        break
-                    }
-                }
-                if let jws = activeJWS {
+            // Re-soumet la transaction active au serveur pour resynchroniser
+            // Firestore (utile si le webhook/verifyPurchase initial avait
+            // été manqué — nouvel appareil, réinstall, etc.).
+            let monthlyJWS = await storeKit.currentEntitlementJWS(for: PitchaProductID.premiumMonthly)
+            let yearlyJWS = await storeKit.currentEntitlementJWS(for: PitchaProductID.premiumYearly)
+            let jws = monthlyJWS ?? yearlyJWS
+            if let jws {
+                do {
                     try await service.verifyPurchaseServerSide(jws: jws)
                     successMessage = "Abonnement Premium restauré ✓"
-                } else {
-                    successMessage = "Aucun achat à restaurer."
+                } catch {
+                    errorMessage = error.localizedDescription
                 }
-            } catch {
-                errorMessage = error.localizedDescription
+            } else {
+                successMessage = "Abonnement Premium restauré ✓"
             }
         } else {
             successMessage = "Aucun achat à restaurer."

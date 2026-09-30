@@ -135,6 +135,14 @@ struct MatchSheetView: View {
                 if let match = viewModel.match {
                     ScrollView {
                         VStack(spacing: 14) {
+                            // Adresse complète — jamais tronquée ici,
+                            // contrairement à la carte dans la liste où elle
+                            // doit tenir sur une ligne. Visible que tu sois
+                            // déjà dedans ou juste en train de regarder
+                            // avant de rejoindre.
+                            addressCard(match: match)
+                                .padding(.horizontal)
+
                             // Terrain
                             PitchView(match: match, viewModel: viewModel, isOrganizer: isOrganizer)
                                 .padding(.horizontal)
@@ -159,7 +167,7 @@ struct MatchSheetView: View {
                 }
             }
             .background(Pitcha.background)
-            .navigationTitle("Feuille de match")
+            .navigationTitle(viewModel.match?.location ?? "Feuille de match")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Fermer") { dismiss() } }
@@ -189,8 +197,8 @@ struct MatchSheetView: View {
                 }
             }
             .sheet(item: $profileUser) { user in
-                MiniProfileSheet(user: user, matchId: viewModel.match?.id)
-                    .presentationDetents([.height(320)])
+                MiniProfileSheet(user: user, match: viewModel.match)
+                    .presentationDetents([.height(400)])
                     .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showInviteFriend) {
@@ -227,6 +235,46 @@ struct MatchSheetView: View {
                 .padding(.horizontal)
         default: EmptyView()
         }
+    }
+
+    // MARK: Adresse complète
+
+    @ViewBuilder
+    private func addressCard(match: Match) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "mappin.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Pitcha.teal)
+                VStack(alignment: .leading, spacing: 3) {
+                    if let zone = match.zone, !zone.isEmpty, zone != match.location {
+                        Text(zone)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    // Pas de lineLimit — l'adresse s'affiche en entier,
+                    // sur autant de lignes que nécessaire.
+                    Text(match.location)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Pitcha.navy)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+
+            Button {
+                let query = match.location.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                if let url = URL(string: "http://maps.apple.com/?q=\(query)") {
+                    UIApplication.shared.open(url)
+                }
+            } label: {
+                Label("Ouvrir dans Plans", systemImage: "arrow.triangle.turn.up.right.circle")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Pitcha.teal)
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 18).fill(.white).shadow(color: .black.opacity(0.05), radius: 8, y: 4))
     }
 
     // MARK: Boutons du bas
@@ -267,6 +315,37 @@ struct MatchSheetView: View {
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 4)
+            } else if match.participants.count < match.maxPlayers {
+                // Ce cas manquait entièrement : personne ne pouvait
+                // rejoindre depuis la feuille de match elle-même si le
+                // bouton n'avait pas été utilisé depuis la liste avant —
+                // par exemple en arrivant ici via une notification ou un
+                // lien direct.
+                Button {
+                    guard let uid, let matchId = match.id else { return }
+                    Task {
+                        do {
+                            try await FirebaseService.shared.joinMatch(matchId: matchId, uid: uid)
+                        } catch {
+                            closureError = error.localizedDescription
+                        }
+                    }
+                } label: {
+                    Text("Rejoindre le match")
+                        .font(.subheadline.bold()).foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).frame(height: 44)
+                        .background(RoundedRectangle(cornerRadius: 14).fill(Pitcha.gradient))
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 4)
+            } else {
+                Text("Match complet")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).frame(height: 44)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.gray.opacity(0.08)))
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
             }
         }
     }
@@ -512,6 +591,15 @@ struct VotingBanner: View {
             } else if !isFinalized, match.isParticipant(uid) {
                 MvpVoteSection(match: match, viewModel: viewModel, uid: uid)
             }
+
+            // Note de fiabilité — désormais directement en tapant la bulle
+            // d'un participant sur le terrain (plus de gros formulaire séparé).
+            if isFinalized, match.isParticipant(uid) {
+                Divider()
+                Text("Tape sur un joueur ci-dessus pour noter sa fiabilité.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 20).fill(.white).shadow(color: .black.opacity(0.06), radius: 8, y: 4))
@@ -536,8 +624,10 @@ struct MvpVoteSection: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(match.participants, id: \.self) { participantUid in
-                        let isMe = participantUid == uid
+                    // On ne peut pas voter pour soi-même — retiré de la
+                    // liste plutôt que juste désactivé, pour que ce soit
+                    // évident sans avoir à taper dessus pour comprendre.
+                    ForEach(match.participants.filter { $0 != uid }, id: \.self) { participantUid in
                         let isSelected = myVote == participantUid
                         Button {
                             guard let uid, let matchId = match.id else { return }
@@ -555,7 +645,7 @@ struct MvpVoteSection: View {
                                                 : AnyShapeStyle(Color.gray.opacity(0.12))
                                         )
                                     )
-                                Text(isMe ? "Toi" : viewModel.pseudo(for: participantUid))
+                                Text(viewModel.pseudo(for: participantUid))
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -751,11 +841,43 @@ extension EnvironmentValues {
 
 struct MiniProfileSheet: View {
     let user: AppUser
-    let matchId: String?
+    let match: Match?
+    /// Contexte du signalement/blocage — "match" par défaut pour ne rien
+    /// casser sur les appels existants (bulles du terrain). Un appel
+    /// depuis un chat d'équipe/club/dm doit passer le vrai contexte, sinon
+    /// le signalement serait mal étiqueté.
+    var context: String = "match"
+    var contextId: String? = nil
     @EnvironmentObject var session: SessionViewModel
     @State private var showReportBlock = false
 
+    @State private var myRating: Int = 0
+    @State private var alreadyRated: Bool? = nil // nil = pas encore vérifié
+    @State private var isSubmittingRating = false
+    @State private var ratingError: String?
+    @State private var justSentRequest = false
+    @State private var justAccepted = false
+
+    private var isAlreadyFriend: Bool {
+        justAccepted || (session.user?.friends.contains(user.id ?? "") ?? false)
+    }
+    private var friendButtonLabel: String {
+        if justSentRequest { return "Demande envoyée" }
+        if session.user?.incomingRequests.contains(user.id ?? "") == true { return "Accepter sa demande" }
+        return "Ajouter en ami"
+    }
+    private var friendButtonIcon: String {
+        if justSentRequest { return "checkmark" }
+        if session.user?.incomingRequests.contains(user.id ?? "") == true { return "person.badge.plus" }
+        return "person.badge.plus"
+    }
+
     private var isMe: Bool { user.id == session.user?.id }
+    private var matchId: String? { match?.id }
+    private var isFinalized: Bool { match?.status == .played || match?.status == .contested }
+    private var canRate: Bool {
+        !isMe && isFinalized && (match?.isParticipant(session.user?.id) ?? false) && (match?.isParticipant(user.id) ?? false)
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -783,6 +905,62 @@ struct MiniProfileSheet: View {
                 }
             }
 
+            // Note de fiabilité — visible uniquement une fois le match
+            // terminé, pour un autre participant, et si pas déjà noté.
+            if canRate, alreadyRated == false {
+                VStack(spacing: 8) {
+                    Text("Fiabilité de \(user.pseudo)")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        ForEach(1...5, id: \.self) { star in
+                            Image(systemName: star <= myRating ? "star.fill" : "star")
+                                .font(.title2)
+                                .foregroundStyle(Color(hex: "F2C740"))
+                                .onTapGesture {
+                                    myRating = star
+                                    submitRating()
+                                }
+                        }
+                    }
+                    if isSubmittingRating {
+                        ProgressView().padding(.top, 2)
+                    }
+                    if let ratingError {
+                        Text(ratingError).font(.caption2).foregroundStyle(.red)
+                    }
+                }
+                .padding(.top, 4)
+            } else if canRate, alreadyRated == true {
+                Text("Fiabilité notée ✓")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+            }
+
+            // Ami — masqué pour soi-même et si déjà ami. 3 états possibles :
+            // pas encore ami, cette personne m'a déjà envoyé une demande
+            // (on peut l'accepter direct), ou je viens de lui envoyer la
+            // mienne (bouton désactivé, retour visuel immédiat).
+            if !isMe, let targetUid = user.id, !isAlreadyFriend {
+                Button {
+                    guard let myUid = session.user?.id else { return }
+                    Task {
+                        if session.user?.incomingRequests.contains(targetUid) == true {
+                            try? await FirebaseService.shared.acceptFriendRequest(myUid: myUid, from: targetUid)
+                            justAccepted = true
+                        } else {
+                            try? await FirebaseService.shared.sendFriendRequest(myUid: myUid, to: targetUid)
+                            justSentRequest = true
+                        }
+                    }
+                } label: {
+                    Label(friendButtonLabel, systemImage: friendButtonIcon)
+                        .font(.caption.bold())
+                        .foregroundStyle(justSentRequest || justAccepted ? .secondary : Pitcha.teal)
+                }
+                .disabled(justSentRequest || justAccepted)
+            }
+
             // Signaler / Bloquer (masqué pour son propre profil)
             if !isMe, let uid = user.id {
                 Button {
@@ -793,13 +971,32 @@ struct MiniProfileSheet: View {
                         .foregroundStyle(.red)
                 }
                 .sheet(isPresented: $showReportBlock) {
-                    ReportBlockSheet(targetUid: uid, targetPseudo: user.pseudo, context: "match", contextId: matchId)
+                    ReportBlockSheet(targetUid: uid, targetPseudo: user.pseudo, context: context, contextId: contextId ?? matchId)
                 }
             }
 
             Spacer()
         }
         .padding().background(Pitcha.background)
+        .task {
+            guard canRate, let matchId, let myUid = session.user?.id, let targetUid = user.id else { return }
+            alreadyRated = await FirebaseService.shared.hasRatedParticipant(matchId: matchId, voterId: myUid, targetUid: targetUid)
+        }
+    }
+
+    private func submitRating() {
+        guard let matchId, let targetUid = user.id else { return }
+        isSubmittingRating = true
+        ratingError = nil
+        Task {
+            do {
+                try await FirebaseService.shared.rateParticipantReliability(matchId: matchId, targetUid: targetUid, rating: myRating)
+                alreadyRated = true
+            } catch {
+                ratingError = error.localizedDescription
+            }
+            isSubmittingRating = false
+        }
     }
 }
 

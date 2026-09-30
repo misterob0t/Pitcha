@@ -30,6 +30,12 @@ final class SessionViewModel: ObservableObject {
 
     /// Invitations à rejoindre un match reçues d'amis (affichées via la cloche).
     @Published var pendingMatchInvites: [MatchInvite] = []
+    // Somme des messages non lus (équipes + clubs + DM) — alimente à la
+    // fois le badge de l'app et la pastille sur l'onglet Équipes. Recalculé
+    // périodiquement plutôt qu'avec un listener par conversation (coût
+    // Firestore bien plus élevé pour un gain de fraîcheur minime ici).
+    @Published var totalUnreadCount: Int = 0
+    private var unreadRefreshTask: Task<Void, Never>?
 
     private let service = FirebaseService.shared
     private var authHandle: AuthStateDidChangeListenerHandle?
@@ -64,6 +70,7 @@ final class SessionViewModel: ObservableObject {
                     self.stopPresence()
                     self.user = nil
                     self.state = .loggedOut
+                    Task { await RevenueCatManager.shared.unlinkUser() }
                     return
                 }
                 if firebaseUser.isEmailVerified {
@@ -71,6 +78,7 @@ final class SessionViewModel: ObservableObject {
                     self.attachMatchInvitesListener(uid: firebaseUser.uid)
                     self.startPresence(uid: firebaseUser.uid)
                     self.state = .loggedIn
+                    Task { await RevenueCatManager.shared.linkUser(uid: firebaseUser.uid) }
                 } else {
                     self.state = .emailNotVerified
                 }
@@ -116,11 +124,35 @@ final class SessionViewModel: ObservableObject {
         // pseudoLower, on le renseigne automatiquement à la connexion pour
         // que la recherche d'amis le trouve immédiatement.
         Task { await self.service.backfillPseudoLowerIfNeeded(uid: uid) }
+        startUnreadRefresh(uid: uid)
     }
 
     private func detachUserListener() {
         userListener?.remove()
         userListener = nil
+        unreadRefreshTask?.cancel()
+        unreadRefreshTask = nil
+        totalUnreadCount = 0
+    }
+
+    /// Recalcule le total de non-lus toutes les 20s — même rythme que le
+    /// reste de l'app pour ce type de rafraîchissement non critique.
+    private func startUnreadRefresh(uid: String) {
+        unreadRefreshTask?.cancel()
+        unreadRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshUnreadCount(uid: uid)
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+            }
+        }
+    }
+
+    /// Recalcule immédiatement — appelé aussi juste après avoir marqué une
+    /// conversation comme lue, pour que la pastille disparaisse sans
+    /// attendre le prochain cycle des 20s.
+    func refreshUnreadCount(uid: String) async {
+        let total = await service.computeTotalUnreadCount(uid: uid, teamIds: user?.teamIds ?? [], clubIds: user?.clubIdsValue ?? [], friendIds: user?.friends ?? [])
+        await MainActor.run { self.totalUnreadCount = total }
     }
 
     // MARK: - Invitations à un match (notif locale sur nouvelle invitation uniquement)
@@ -134,7 +166,8 @@ final class SessionViewModel: ObservableObject {
                 if hasNewInvite, let latest = invites.first {
                     NotificationService.showLocal(
                         title: "Invitation à un match",
-                        body: "\(latest.invitedByPseudo) t'invite à rejoindre son match."
+                        body: "\(latest.invitedByPseudo) t'invite à rejoindre son match.",
+                        data: ["action": "matchInvite"]
                     )
                 }
             }
